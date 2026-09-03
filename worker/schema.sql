@@ -41,11 +41,15 @@ CREATE TABLE weeks (
 CREATE TABLE games (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   week_id INTEGER NOT NULL REFERENCES weeks(id),
+  espn_event_id TEXT,
   home_team TEXT NOT NULL,
+  home_team_abbr TEXT,
   away_team TEXT NOT NULL,
+  away_team_abbr TEXT,
   kickoff_time TEXT NOT NULL, -- ISO 8601 UTC
   final_winner TEXT -- NULL until the game ends
 );
+CREATE UNIQUE INDEX idx_games_espn_event ON games(espn_event_id) WHERE espn_event_id IS NOT NULL;
 
 -- group_id NULL = a global pick (applies to every group the user is in)
 -- group_id set  = a pick scoped to just that one group (per-group mode)

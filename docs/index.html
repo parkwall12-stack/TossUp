@@ -152,6 +152,8 @@ const state = {
   standingsType: 'weekly',
   standings: [],
   pool: null,
+  groupDetail: null,
+  groupMembers: [],
   busy: false,
 };
 
@@ -400,7 +402,10 @@ function screenGroupHeader() {
         <h1 style="font-size:20px;">${state.currentGroup.name}</h1>
         <div class="eyebrow small">${state.pickMode === 'per_group' ? 'Per-group picks' : 'Global picks'}</div>
       </div>
-      <button class="ghost" onclick="backToGroups()">Groups</button>
+      <div class="row" style="gap:6px;">
+        <button class="ghost" onclick="openGroupSettings()">⚙</button>
+        <button class="ghost" onclick="backToGroups()">Groups</button>
+      </div>
     </div>
   `;
 }
@@ -422,10 +427,10 @@ function screenPicks() {
         <div class="tiny muted" style="margin-bottom:8px;">${time}${locked ? ' · locked' : ''}</div>
         <div class="row">
           <button class="pick-btn ${awaySel ? 'selected' : ''}" ${locked ? 'disabled' : ''} onclick="makePick(${g.id}, '${g.away_team}')">
-            <span class="badge">${g.away_team.slice(0,3).toUpperCase()}</span>${g.away_team}
+            <span class="badge">${g.away_team_abbr || g.away_team.slice(0,3).toUpperCase()}</span>${g.away_team}
           </button>
           <button class="pick-btn ${homeSel ? 'selected' : ''}" ${locked ? 'disabled' : ''} onclick="makePick(${g.id}, '${g.home_team}')">
-            <span class="badge">${g.home_team.slice(0,3).toUpperCase()}</span>${g.home_team}
+            <span class="badge">${g.home_team_abbr || g.home_team.slice(0,3).toUpperCase()}</span>${g.home_team}
           </button>
         </div>
       </div>
@@ -525,6 +530,88 @@ function groupTabs() {
   `;
 }
 
+function screenGroupSettings() {
+  const isCommish = state.role === 'commissioner';
+  const membersRows = (state.groupMembers || []).map(m => `
+    <div class="card row">
+      <span class="avatar">${m.name[0].toUpperCase()}</span>
+      <div style="flex:1;" class="small">${m.name}${m.role === 'commissioner' ? ' · commissioner' : ''}</div>
+      ${isCommish && m.role !== 'commissioner' ? `<button onclick="removeMember(${m.id})">Remove</button>` : ''}
+    </div>
+  `).join('');
+
+  return `
+    <div class="header row between">
+      <h1 style="font-size:20px;">Group settings</h1>
+      <button class="ghost" onclick="closeGroupSettings()">Back</button>
+    </div>
+    ${isCommish ? `
+      <form class="card stack" onsubmit="saveGroupSettings(event)">
+        <div><label>League name</label><input name="name" value="${state.groupDetail ? state.groupDetail.name : state.currentGroup.name}" required></div>
+        <button class="primary full">Save changes</button>
+      </form>
+    ` : ''}
+    <div class="small muted" style="margin:14px 0 6px;">Members</div>
+    <div class="stack">${membersRows}</div>
+    ${isCommish
+      ? `<button class="full" style="margin-top:16px; border-color:var(--danger); color:var(--danger);" onclick="deleteGroup()">Delete group</button>`
+      : `<button class="full" style="margin-top:16px; border-color:var(--danger); color:var(--danger);" onclick="leaveGroup()">Leave group</button>`
+    }
+  `;
+}
+
+async function openGroupSettings() {
+  state.tab = 'settings';
+  await loadGroupDetail();
+  render();
+}
+
+function closeGroupSettings() {
+  state.tab = 'picks';
+  loadPicks().then(render);
+}
+
+async function loadGroupDetail() {
+  const data = await api(`/api/groups/${state.currentGroup.id}`);
+  state.groupDetail = data.group;
+  state.groupMembers = data.members;
+  state.role = data.role;
+}
+
+async function saveGroupSettings(e) {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const newName = form.get('name');
+  await api(`/api/groups/${state.currentGroup.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name: newName }),
+  });
+  state.currentGroup.name = newName;
+  await loadGroupDetail();
+  render();
+}
+
+async function removeMember(userId) {
+  if (!confirm('Remove this member from the group?')) return;
+  await api(`/api/groups/${state.currentGroup.id}/members/${userId}`, { method: 'DELETE' });
+  await loadGroupDetail();
+  render();
+}
+
+async function leaveGroup() {
+  if (!confirm('Leave this group?')) return;
+  await api(`/api/groups/${state.currentGroup.id}/leave`, { method: 'POST' });
+  await loadGroups();
+  backToGroups();
+}
+
+async function deleteGroup() {
+  if (!confirm('Delete this group permanently? This cannot be undone.')) return;
+  await api(`/api/groups/${state.currentGroup.id}`, { method: 'DELETE' });
+  await loadGroups();
+  backToGroups();
+}
+
 // ---------- render ----------
 function render() {
   const app = document.getElementById('app');
@@ -538,6 +625,7 @@ function render() {
   }
   if (state.tab === 'picks') app.innerHTML = screenPicks();
   else if (state.tab === 'standings') app.innerHTML = screenStandings();
+  else if (state.tab === 'settings') app.innerHTML = screenGroupSettings();
   else app.innerHTML = screenCommissioner();
 }
 

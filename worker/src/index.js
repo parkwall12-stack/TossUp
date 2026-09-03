@@ -247,7 +247,11 @@ async function handleGetGroup(request, env, groupId) {
   const membership = await getMembership(env, uid, groupId);
   if (!membership) return json({ error: 'Not a member of this group' }, 403);
   const group = await env.DB.prepare('SELECT * FROM groups WHERE id = ?').bind(groupId).first();
-  return json({ group, role: membership.role });
+  const { results: members } = await env.DB.prepare(
+    `SELECT u.id, u.name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.group_id = ? ORDER BY (m.role = 'commissioner') DESC, u.name`
+  ).bind(groupId).all();
+  return json({ group, role: membership.role, members });
 }
 
 async function handleUpdateGroup(request, env, groupId) {
@@ -265,6 +269,46 @@ async function handleUpdateGroup(request, env, groupId) {
        pool_amount_per_person = COALESCE(?, pool_amount_per_person)
      WHERE id = ?`
   ).bind(name ?? null, pool_enabled === undefined ? null : (pool_enabled ? 1 : 0), pool_amount_per_person ?? null, groupId).run();
+  return json({ ok: true });
+}
+
+async function handleRemoveMember(request, env, groupId, targetUserId) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+  const membership = await getMembership(env, uid, groupId);
+  if (!membership || membership.role !== 'commissioner') {
+    return json({ error: 'Only the commissioner can remove members' }, 403);
+  }
+  if (String(targetUserId) === String(uid)) {
+    return json({ error: 'Delete the group instead of removing yourself' }, 400);
+  }
+  await env.DB.prepare('DELETE FROM memberships WHERE user_id = ? AND group_id = ?').bind(targetUserId, groupId).run();
+  return json({ ok: true });
+}
+
+async function handleLeaveGroup(request, env, groupId) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+  const membership = await getMembership(env, uid, groupId);
+  if (!membership) return json({ error: 'Not a member of this group' }, 403);
+  if (membership.role === 'commissioner') {
+    return json({ error: 'As commissioner, delete the group instead of leaving it' }, 400);
+  }
+  await env.DB.prepare('DELETE FROM memberships WHERE user_id = ? AND group_id = ?').bind(uid, groupId).run();
+  return json({ ok: true });
+}
+
+async function handleDeleteGroup(request, env, groupId) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+  const membership = await getMembership(env, uid, groupId);
+  if (!membership || membership.role !== 'commissioner') {
+    return json({ error: 'Only the commissioner can delete the group' }, 403);
+  }
+  await env.DB.prepare('DELETE FROM pool_payments WHERE group_id = ?').bind(groupId).run();
+  await env.DB.prepare('DELETE FROM picks WHERE group_id = ?').bind(groupId).run();
+  await env.DB.prepare('DELETE FROM memberships WHERE group_id = ?').bind(groupId).run();
+  await env.DB.prepare('DELETE FROM groups WHERE id = ?').bind(groupId).run();
   return json({ ok: true });
 }
 
@@ -449,6 +493,103 @@ async function handleMarkPaid(request, env, groupId, userId) {
   return json({ ok: true });
 }
 
+// ---------- ESPN sync ----------
+
+const ESPN_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+
+async function fetchEspnScoreboard(year, week) {
+  let url = ESPN_SCOREBOARD_URL;
+  const params = [];
+  if (year) params.push(`year=${year}`);
+  if (week) params.push(`week=${week}&seasontype=2`); // seasontype=2 is the regular season
+  if (params.length) url += '?' + params.join('&');
+
+  const res = await fetch(url, { headers: { 'User-Agent': 'TossupApp/1.0' } });
+  if (!res.ok) throw new Error(`ESPN API returned ${res.status}`);
+  return res.json();
+}
+
+async function getOrCreateWeek(env, seasonYear, weekNumber) {
+  let week = await env.DB.prepare('SELECT id FROM weeks WHERE season_year = ? AND week_number = ?')
+    .bind(seasonYear, weekNumber).first();
+  if (!week) {
+    const result = await env.DB.prepare('INSERT INTO weeks (season_year, week_number) VALUES (?, ?)')
+      .bind(seasonYear, weekNumber).run();
+    week = { id: result.meta.last_row_id };
+  }
+  return week.id;
+}
+
+async function upsertGame(env, weekId, espnEventId, home, away, kickoffTime, finalWinner) {
+  const existing = await env.DB.prepare('SELECT id FROM games WHERE espn_event_id = ?').bind(espnEventId).first();
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE games SET home_team = ?, home_team_abbr = ?, away_team = ?, away_team_abbr = ?, kickoff_time = ?, final_winner = ?
+       WHERE id = ?`
+    ).bind(home.name, home.abbr, away.name, away.abbr, kickoffTime, finalWinner, existing.id).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO games (week_id, espn_event_id, home_team, home_team_abbr, away_team, away_team_abbr, kickoff_time, final_winner)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(weekId, espnEventId, home.name, home.abbr, away.name, away.abbr, kickoffTime, finalWinner).run();
+  }
+}
+
+// Pulls one week's games from ESPN and writes them in. With no args, ESPN returns
+// whatever it considers the "current" week — that's what the cron trigger relies on.
+async function syncNflGames(env, year, week) {
+  const data = await fetchEspnScoreboard(year, week);
+  const seasonYear = data.season?.year || year;
+  const weekNumber = data.week?.number || week;
+  if (!seasonYear || !weekNumber) throw new Error('Could not determine season/week from ESPN response');
+
+  const weekId = await getOrCreateWeek(env, seasonYear, weekNumber);
+  let synced = 0;
+
+  for (const event of data.events || []) {
+    const competition = event.competitions?.[0];
+    if (!competition) continue;
+
+    const homeC = competition.competitors?.find((c) => c.homeAway === 'home');
+    const awayC = competition.competitors?.find((c) => c.homeAway === 'away');
+    if (!homeC || !awayC) continue;
+
+    const home = { name: homeC.team.displayName, abbr: homeC.team.abbreviation };
+    const away = { name: awayC.team.displayName, abbr: awayC.team.abbreviation };
+
+    const completed = competition.status?.type?.completed === true;
+    let finalWinner = null;
+    if (completed) {
+      const homeScore = Number(homeC.score);
+      const awayScore = Number(awayC.score);
+      if (homeScore > awayScore) finalWinner = home.name;
+      else if (awayScore > homeScore) finalWinner = away.name;
+      // a tie leaves final_winner null — nobody's pick scores that game
+    }
+
+    await upsertGame(env, weekId, event.id, home, away, event.date, finalWinner);
+    synced++;
+  }
+
+  return { seasonYear, weekNumber, synced };
+}
+
+async function handleSyncNfl(request, env) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+
+  const url = new URL(request.url);
+  const year = url.searchParams.get('year');
+  const week = url.searchParams.get('week');
+
+  try {
+    const result = await syncNflGames(env, year, week);
+    return json({ ok: true, ...result });
+  } catch (err) {
+    return json({ error: 'Sync failed', detail: String(err) }, 500);
+  }
+}
+
 // ---------- router ----------
 
 async function route(request, env) {
@@ -469,6 +610,13 @@ async function route(request, env) {
       const groupMatch = path.match(/^\/api\/groups\/(\d+)$/);
       if (groupMatch && method === 'GET') return handleGetGroup(request, env, groupMatch[1]);
       if (groupMatch && method === 'PATCH') return handleUpdateGroup(request, env, groupMatch[1]);
+      if (groupMatch && method === 'DELETE') return handleDeleteGroup(request, env, groupMatch[1]);
+
+      const memberMatch = path.match(/^\/api\/groups\/(\d+)\/members\/(\d+)$/);
+      if (memberMatch && method === 'DELETE') return handleRemoveMember(request, env, memberMatch[1], memberMatch[2]);
+
+      const leaveMatch = path.match(/^\/api\/groups\/(\d+)\/leave$/);
+      if (leaveMatch && method === 'POST') return handleLeaveGroup(request, env, leaveMatch[1]);
 
       const picksMatch = path.match(/^\/api\/groups\/(\d+)\/picks$/);
       if (picksMatch && method === 'GET') return handleGetPicks(request, env, picksMatch[1]);
@@ -488,6 +636,8 @@ async function route(request, env) {
       const gamesMatch = path.match(/^\/api\/weeks\/(\d+)\/(\d+)\/games$/);
       if (gamesMatch && method === 'GET') return handleGetGames(request, env, gamesMatch[1], gamesMatch[2]);
 
+      if (path === '/api/sync/nfl' && method === 'POST') return handleSyncNfl(request, env);
+
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: 'Server error', detail: String(err) }, 500);
@@ -506,5 +656,10 @@ export default {
     const response = await route(request, env);
     response.headers.set('Access-Control-Allow-Origin', allowOrigin);
     return response;
+  },
+
+  // Runs on the schedule set in wrangler.toml — keeps the current week's games and scores fresh
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(syncNflGames(env));
   },
 };

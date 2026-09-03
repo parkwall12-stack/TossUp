@@ -7,5 +7,8 @@ binding = "DB"
 database_name = "pickem-pool"
 database_id = "a736c531-4517-4c10-9d68-58db21daee23"
 
+[triggers]
+crons = ["*/30 * * * *"]
+
 # Set with: wrangler secret put JWT_SECRET
 # (a long random string — used to sign login session tokens)
