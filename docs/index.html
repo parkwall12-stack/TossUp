@@ -221,8 +221,15 @@ async function loadPool() {
 async function handleAuthSubmit(e) {
   e.preventDefault();
   state.authError = '';
-  state.busy = true; render();
   const form = new FormData(e.target);
+
+  if (state.authMode === 'signup' && form.get('password') !== form.get('confirmPassword')) {
+    state.authError = 'Passwords don\'t match';
+    render();
+    return;
+  }
+
+  state.busy = true; render();
   try {
     const path = state.authMode === 'login' ? '/api/login' : '/api/signup';
     const body = state.authMode === 'login'
@@ -316,6 +323,7 @@ function screenAuth() {
       ${isLogin ? '' : `<div><label>Name</label><input name="name" required></div>`}
       <div><label>Email</label><input name="email" type="email" required></div>
       <div><label>Password</label><input name="password" type="password" required minlength="8"></div>
+      ${isLogin ? '' : `<div><label>Confirm password</label><input name="confirmPassword" type="password" required minlength="8"></div>`}
       ${state.authError ? `<div class="error">${state.authError}</div>` : ''}
       <button class="primary full" ${state.busy ? 'disabled' : ''}>${isLogin ? 'Log in' : 'Create account'}</button>
     </form>
