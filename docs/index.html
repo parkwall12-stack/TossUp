@@ -75,8 +75,12 @@
     color: var(--text);
     padding: 11px 14px;
     cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
-  button:hover { border-color: var(--text-dim); }
+  @media (hover: hover) {
+    button:hover { border-color: var(--text-dim); }
+  }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #241a05; font-weight: 600; }
   button.primary:hover { background: #f0ae4f; }
@@ -96,19 +100,26 @@
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   /* Team pick buttons: a diagonal panel in the team's main color, then thin stripes
-     in its 2nd and 3rd colors. Colors are set per button via --c1/--c2/--c3/--ink. */
+     in its 2nd and 3rd colors, drawn as an SVG in teamButton(). --ink is the abbreviation color. */
   .matchup { display: flex; align-items: center; gap: 5px; }
   .matchup .vs { font-size: 11px; }
   .team-btn {
-    --c1: #3a4654; --c2: #55616f; --c3: #6b7785; --ink: #f2efe9; --pick-fill: transparent;
+    --ink: #f2efe9;
     position: relative; flex: 1; min-width: 0; text-align: left;
     display: flex; align-items: center;
     padding: 12px 6px 12px 5px;
     border: 1px solid var(--border);
-    background:
-      linear-gradient(115deg, var(--c1) 0 41px, var(--c2) 41px 46px, var(--c3) 46px 50px, var(--pick-fill) 50px),
-      var(--surface-2);
+    background: var(--surface-2);
+    transition: transform 0.08s ease;
   }
+  .team-btn:not(:disabled):active { transform: scale(0.97); }
+  /* Vector stripes (smooth edges at any zoom), clipped to the button's rounded left side */
+  .team-btn .team-stripes {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 58px;
+    border-radius: 7px 0 0 7px; overflow: hidden; pointer-events: none;
+  }
+  .team-btn .team-stripes svg { display: block; width: 100%; height: 100%; }
+  .team-btn .team-abbr, .team-btn .team-name { position: relative; }
   .team-btn .team-abbr {
     width: 31px; flex-shrink: 0; text-align: center;
     font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.4px;
@@ -129,13 +140,12 @@
     box-shadow: 0 0 0 2px var(--surface);
   }
   .team-btn.selected {
-    --pick-fill: rgba(232,163,61,0.16);
+    background: linear-gradient(rgba(232,163,61,0.16), rgba(232,163,61,0.16)), var(--surface-2);
     border-color: var(--accent); color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
+  .team-btn.selected .team-stripes { top: 1px; bottom: 1px; left: 1px; border-radius: 6px 0 0 6px; }
   .team-btn:disabled { opacity: 0.72; cursor: default; }
-  .team-btn:disabled:hover { border-color: var(--border); }
-  .team-btn.selected:disabled:hover { border-color: var(--accent); }
   /* Finished games: the winner keeps full color, the loser fades */
   .team-btn.winner { opacity: 1; }
   .team-btn.loser { opacity: 0.38; }
@@ -258,8 +268,15 @@ async function loadGroupScreen(group) {
 
 async function loadPicks() {
   const q = `?season=${state.seasonYear}&week=${state.weekNumber}`;
-  const data = await api(`/api/groups/${state.currentGroup.id}/picks${q}`);
-  state.games = data.games;
+  const groupId = state.currentGroup.id;
+  const data = await api(`/api/groups/${groupId}/picks${q}`);
+  // Keep any tap that's still saving, so a reload never flips a pick back on screen
+  state.games = data.games.map((g) => {
+    g.saved_team = g.picked_team;
+    const pending = unsavedPicks[`${groupId}:${g.id}`];
+    if (pending !== undefined && !g.locked) g.picked_team = pending;
+    return g;
+  });
   state.pickMode = data.pick_mode;
 }
 
@@ -345,25 +362,63 @@ function showToast(message, kind = '') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
-async function makePick(gameId, team) {
-  try {
-    await api('/api/picks', {
-      method: 'POST',
-      body: JSON.stringify({ game_id: gameId, group_id: state.currentGroup.id, picked_team: team }),
-    });
-    await loadPicks();
-    render();
-  } catch (err) {
-    showToast(err.message, 'danger');
-    // A game may have just kicked off, so refresh to show it locked
-    loadPicks().then(render).catch(() => {});
+// ---------- picks: show on tap, save in the background ----------
+const unsavedPicks = {}; // "group:game" -> team on screen that the server hasn't confirmed yet
+const saveQueue = {};    // "group:game" -> newest pick waiting to be sent
+const saveLoops = {};    // "group:game" -> request loop currently sending that game's picks
+
+function makePick(gameId, team) {
+  const game = state.games.find((g) => g.id === gameId);
+  if (!game || game.locked || game.picked_team === team) return;
+  const key = `${state.currentGroup.id}:${gameId}`;
+
+  game.picked_team = team; // highlight right away
+  unsavedPicks[key] = team;
+  saveQueue[key] = { gameId, team, groupId: state.currentGroup.id };
+  render();
+
+  if (!saveLoops[key]) {
+    saveLoops[key] = runSaveLoop(key).finally(() => { delete saveLoops[key]; });
   }
+}
+
+// Sends a game's picks one at a time, so if someone switches teams mid-save
+// the newest choice is always the last one the server receives.
+async function runSaveLoop(key) {
+  while (saveQueue[key]) {
+    const { gameId, team, groupId } = saveQueue[key];
+    delete saveQueue[key];
+    try {
+      await api('/api/picks', {
+        method: 'POST',
+        body: JSON.stringify({ game_id: gameId, group_id: groupId, picked_team: team }),
+      });
+      if (unsavedPicks[key] === team) delete unsavedPicks[key];
+      const g = state.games.find((x) => x.id === gameId);
+      if (g && state.currentGroup && state.currentGroup.id === groupId) g.saved_team = team;
+    } catch (err) {
+      delete saveQueue[key];
+      delete unsavedPicks[key];
+      // Undo on screen, then refresh in case the game just kicked off
+      const g = state.games.find((x) => x.id === gameId);
+      if (g && state.currentGroup && state.currentGroup.id === groupId) g.picked_team = g.saved_team ?? null;
+      render();
+      showToast(`Pick not saved: ${err.message}`, 'danger');
+      try { await loadPicks(); render(); } catch (e) { /* offline — keep the undone state */ }
+      return;
+    }
+  }
+}
+
+function waitForPickSaves() {
+  return Promise.allSettled(Object.values(saveLoops));
 }
 
 // Picks already save on every tap. Submitting re-reads them from the server to confirm
 // every one landed, then tells the player their lineup is in.
 async function submitLineup() {
   try {
+    await waitForPickSaves();
     await loadPicks();
     render();
     const stillOpen = state.games.filter(g => !g.locked && !g.picked_team).length;
@@ -556,13 +611,17 @@ function teamButton(g, side, locked) {
   const selected = g.picked_team === name;
   const finished = (g.status === 'FT' || g.status === 'AOT') && g.final_winner;
   const result = finished ? (g.final_winner === name ? 'winner' : 'loser') : '';
-  const colors = TEAM_COLORS[abbr];
-  const style = colors
-    ? `--c1:${colors[0]};--c2:${colors[1]};--c3:${colors[2]};--ink:${inkFor(colors[0])};`
-    : '';
+  const [c1, c2, c3] = TEAM_COLORS[abbr] || ['#3a4654', '#55616f', '#6b7785'];
   return `
-    <button class="team-btn ${selected ? 'selected' : ''} ${result}" style="${style}" ${locked ? 'disabled' : ''}
+    <button class="team-btn ${selected ? 'selected' : ''} ${result}" style="--ink:${inkFor(c1)}" ${locked ? 'disabled' : ''}
       aria-pressed="${selected}" aria-label="Pick ${name}" onclick="makePick(${g.id}, '${name}')">
+      <span class="team-stripes" aria-hidden="true">
+        <svg viewBox="0 0 58 48" preserveAspectRatio="none">
+          <polygon points="0,0 55,0 33,48 0,48" fill="${c3}"/>
+          <polygon points="0,0 51,0 29,48 0,48" fill="${c2}"/>
+          <polygon points="0,0 46,0 24,48 0,48" fill="${c1}"/>
+        </svg>
+      </span>
       <span class="team-abbr">${abbr}</span>
       <span class="team-name">${nickname}</span>
       ${selected ? '<span class="team-check" aria-hidden="true">✓</span>' : ''}
