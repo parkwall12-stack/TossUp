@@ -109,6 +109,17 @@
   .pick-btn:disabled { opacity: 0.5; }
   .toplink { color: var(--text-dim); font-size: 13px; background: none; border: none; padding: 4px 0; }
   .error { color: var(--danger); font-size: 13px; margin-top: 6px; }
+  .success-text { color: var(--success); }
+  .toast {
+    position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(12px);
+    max-width: calc(100% - 32px); width: max-content;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; font-size: 14px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.success { border-color: var(--success); }
+  .toast.danger { border-color: var(--danger); }
   .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
   .tabs button { flex: 1; }
   .tabs button.active { background: rgba(232,163,61,0.14); border-color: var(--accent); color: var(--accent); }
@@ -285,6 +296,22 @@ async function handleJoinGroup(e) {
   render();
 }
 
+let toastTimer = null;
+function showToast(message, kind = '') {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.className = `toast ${kind}`;
+  el.textContent = message;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
 async function makePick(gameId, team) {
   try {
     await api('/api/picks', {
@@ -294,7 +321,26 @@ async function makePick(gameId, team) {
     await loadPicks();
     render();
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, 'danger');
+    // A game may have just kicked off, so refresh to show it locked
+    loadPicks().then(render).catch(() => {});
+  }
+}
+
+// Picks already save on every tap. Submitting re-reads them from the server to confirm
+// every one landed, then tells the player their lineup is in.
+async function submitLineup() {
+  try {
+    await loadPicks();
+    render();
+    const stillOpen = state.games.filter(g => !g.locked && !g.picked_team).length;
+    if (stillOpen > 0) {
+      showToast(`${stillOpen} open game${stillOpen === 1 ? '' : 's'} still need${stillOpen === 1 ? 's' : ''} a pick`, 'danger');
+      return;
+    }
+    showToast('Lineup submitted ✓ You can change any pick until its game kicks off.', 'success');
+  } catch (err) {
+    showToast('Couldn\'t reach the server — check your connection and try again.', 'danger');
   }
 }
 
@@ -306,7 +352,7 @@ async function markPaid(userId) {
 
 async function copyInviteCode() {
   await navigator.clipboard.writeText(state.currentGroup.invite_code);
-  alert('Invite code copied');
+  showToast('Invite code copied', 'success');
 }
 
 function changeWeek(delta) {
@@ -480,21 +526,48 @@ function screenPicks() {
     `;
   }).join('');
 
-  const picked = state.games.filter(g => g.picked_team).length;
   const total = state.games.length;
-  const allPicked = total > 0 && picked === total;
+  const picked = state.games.filter(g => g.picked_team).length;
+  const openGames = state.games.filter(g => !g.locked);
+  const openUnpicked = openGames.filter(g => !g.picked_team).length;
+  const missed = state.games.filter(g => g.locked && !g.picked_team).length;
+  const missedNote = missed > 0
+    ? `<div class="tiny muted" style="margin-top:4px;">${missed} game${missed === 1 ? '' : 's'} locked without a pick (0 points)</div>`
+    : '';
+
+  let summaryBar = '';
+  if (total > 0 && openGames.length === 0) {
+    summaryBar = `
+      <div class="card" style="margin-top:4px;">
+        <div class="small">Week locked · ${picked} of ${total} picked</div>
+        ${missedNote}
+      </div>`;
+  } else if (total > 0 && openUnpicked > 0) {
+    summaryBar = `
+      <div class="card row between" style="margin-top:4px;">
+        <div>
+          <div class="small error" style="margin-top:0;">${picked} of ${total} picked · ${openUnpicked} open game${openUnpicked === 1 ? '' : 's'} left</div>
+          ${missedNote}
+        </div>
+        <button class="primary" disabled>Submit lineup</button>
+      </div>`;
+  } else if (total > 0) {
+    summaryBar = `
+      <div class="card row between" style="margin-top:4px;">
+        <div>
+          <div class="small success-text">✓ All open games picked · ${picked} of ${total}</div>
+          ${missedNote}
+        </div>
+        <button class="primary" onclick="submitLineup()">Submit lineup</button>
+      </div>`;
+  }
 
   return `
     ${screenGroupHeader()}
     ${weekSwitcher()}
     ${groupTabs()}
     <div class="stack">${rows || '<p class="muted small">No games loaded for this week yet.</p>'}</div>
-    ${total > 0 ? `
-      <div class="card row between" style="margin-top:4px;">
-        <span class="small ${allPicked ? '' : 'error'}">${picked} of ${total} picked${allPicked ? '' : ' — fill every game to submit'}</span>
-        <button class="primary" ${allPicked ? '' : 'disabled'}>Submit lineup</button>
-      </div>
-    ` : ''}
+    ${summaryBar}
   `;
 }
 
