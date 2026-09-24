@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12181f">
 <title>Tossup</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+
   :root {
     --bg: #12181f;
     --surface: #1b232c;
@@ -150,11 +152,32 @@
   .team-btn.winner { opacity: 1; }
   .team-btn.loser { opacity: 0.38; }
   .team-btn.selected.loser { opacity: 0.55; }
+  /* Right / wrong on your own picks once a game is final (green / red), tie stays neutral */
+  .team-btn.selected.correct {
+    background: linear-gradient(rgba(79,166,91,0.16), rgba(79,166,91,0.16)), var(--surface-2);
+    border-color: var(--success); color: var(--success);
+    box-shadow: inset 0 0 0 1px var(--success);
+  }
+  .team-btn.selected.wrong {
+    background: linear-gradient(rgba(217,97,79,0.14), rgba(217,97,79,0.14)), var(--surface-2);
+    border-color: var(--danger); color: var(--danger);
+    box-shadow: inset 0 0 0 1px var(--danger);
+    opacity: 0.9;
+  }
+  .team-btn.selected.push { border-color: var(--text-dim); color: var(--text); box-shadow: inset 0 0 0 1px var(--text-dim); }
+  .team-btn .team-check.correct { background: var(--success); color: #0d1f10; }
+  .team-btn .team-check.wrong { background: var(--danger); color: #2a0d08; }
+  .team-btn .team-check.push { background: var(--text-dim); color: var(--bg); }
+
   .toplink { color: var(--text-dim); font-size: 13px; background: none; border: none; padding: 4px 0; }
+  .backlink {
+    background: none; border: none; padding: 6px 0; margin: -6px 0 6px;
+    color: var(--text-dim); font-size: 14px; display: inline-flex; align-items: center; gap: 4px;
+  }
   .error { color: var(--danger); font-size: 13px; margin-top: 6px; }
   .success-text { color: var(--success); }
   .toast {
-    position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(12px);
+    position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(12px);
     max-width: calc(100% - 32px); width: max-content;
     background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 10px; padding: 10px 14px; font-size: 14px;
@@ -163,29 +186,97 @@
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast.success { border-color: var(--success); }
   .toast.danger { border-color: var(--danger); }
+
   .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
   .tabs button { flex: 1; }
   .tabs button.active { background: rgba(232,163,61,0.14); border-color: var(--accent); color: var(--accent); }
+  .tabs.sub button { padding: 8px 10px; font-size: 13px; }
+
+  .header { margin-bottom: 16px; }
+  .header h1 { font-size: 22px; }
+  .header .eyebrow { color: var(--text-dim); font-size: 13px; margin-top: 2px; }
+  .section-label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; margin: 18px 0 8px; }
+  .chip {
+    display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 999px; background: rgba(232,163,61,0.14); color: var(--accent);
+  }
+
+  /* Bottom app tabs */
   .navbar {
     position: fixed; bottom: 0; left: 0; right: 0;
     background: var(--surface); border-top: 1px solid var(--border);
     display: flex; justify-content: center; z-index: 20;
+    padding-bottom: env(safe-area-inset-bottom);
   }
   .navbar-inner { max-width: 480px; width: 100%; display: flex; }
   .navbtn {
-    flex: 1; background: none; border: none; color: var(--text-dim);
-    padding: 10px 0 12px; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    flex: 1; background: none; border: none; border-radius: 0; color: var(--text-dim);
+    padding: 9px 0 10px; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px;
   }
+  .navbtn svg { width: 21px; height: 21px; }
   .navbtn.active { color: var(--accent); }
-  .header { margin-bottom: 18px; }
-  .header .eyebrow { color: var(--text-dim); font-size: 13px; margin-top: 2px; }
+
+  /* Standings / leaderboard rows */
+  .player-row {
+    width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 11px 12px;
+  }
+  .player-row.me { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .player-row .rank { width: 22px; text-align: center; color: var(--text-dim); font-family: 'Oswald', sans-serif; font-size: 15px; }
+  .player-row .who { flex: 1; min-width: 0; }
+  .player-row .who .nm { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .player-row .who .rec { font-size: 12px; color: var(--text-dim); margin-top: 1px; }
+  .player-row .pts { font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600; min-width: 28px; text-align: right; }
+  .player-row .chev { color: var(--text-dim); font-size: 18px; margin-left: 2px; }
+  div.player-row { cursor: default; }
+
+  /* Someone else's picks, compact */
+  :root { --diff: #9b8cff; }
+  .pick-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .pick-row.diff { border-color: var(--diff); background: rgba(155,140,255,0.10); box-shadow: inset 3px 0 0 var(--diff); }
+  .pick-row .game { flex: 1; min-width: 0; }
+  .pick-row .game .teams { font-family: 'Oswald', sans-serif; font-weight: 500; font-size: 15px; letter-spacing: 0.2px; }
+  .pick-row .game .teams .at { color: var(--text-dim); font-family: 'Inter', sans-serif; font-size: 11px; margin: 0 4px; }
+  .pick-row .their { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+  .pick-row .hidden-pick { font-size: 12px; color: var(--text-dim); }
+  .pick-row .you { font-size: 11px; color: var(--diff); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-dim); margin: -4px 0 12px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  /* Small team tag: team color + stripes + abbreviation */
+  .mini-tag {
+    position: relative; display: inline-flex; align-items: center;
+    width: 54px; height: 26px; border-radius: 6px; overflow: hidden; flex-shrink: 0;
+  }
+  .mini-tag svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .mini-tag span {
+    position: relative; width: 36px; text-align: center;
+    font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.4px;
+  }
+  .mini-tag.right { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--success); }
+  .mini-tag.wrong { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--danger); }
+  .result-dot { font-size: 11px; font-weight: 700; }
+  .result-dot.right { color: var(--success); }
+  .result-dot.wrong { color: var(--danger); }
+
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--text-dim); }
+  .kv .v { text-align: right; }
+  .danger-btn { border-color: var(--danger); color: var(--danger); background: transparent; }
+  .empty { color: var(--text-dim); font-size: 13px; text-align: center; padding: 22px 8px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 
 <script>
-// Point this at your deployed Worker (see wrangler.toml / README from the API build)
+// Point this at your deployed Worker
 const API_BASE = 'https://api.tossup.me';
 
 const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
@@ -195,22 +286,65 @@ const state = {
   user: JSON.parse(localStorage.getItem('pickem_user') || 'null'),
   authMode: 'login', // login | signup
   authError: '',
-  groups: [],
-  currentGroup: null,
-  role: 'member',
-  tab: 'picks', // picks | standings | commissioner
+  busy: false,
+
+  view: 'picks', // picks | groups | leaderboard  (the bottom tabs)
   seasonYear: 2026,
   weekNumber: 1,
   currentWeekLoaded: false,
-  games: [],
-  pickMode: 'global',
-  standingsType: 'weekly',
-  standings: [],
-  pool: null,
+
+  games: null, // your picks for the selected week
+
+  groups: [],
+  groupForm: null, // 'create' | 'join' | null
+  currentGroup: null,
+  groupTab: 'standings', // standings | league
+  role: 'member',
   groupDetail: null,
   groupMembers: [],
-  busy: false,
+  standingsType: 'weekly',
+  standings: null,
+  pool: null,
+
+  member: null, // { id } whose picks are open
+  memberData: null,
+
+  leaderboardType: 'weekly',
+  leaderboard: null,
 };
+
+// ---------- helpers ----------
+// Everything typed by a user (names, group names) goes through esc() before it hits the page
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function kickoffLabel(iso) {
+  return new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
+function isFinal(g) {
+  return g.status === 'FT' || g.status === 'AOT';
+}
+
+function abbrFor(g, teamName) {
+  if (teamName === g.home_team) return g.home_team_abbr || g.home_team.slice(0, 3).toUpperCase();
+  if (teamName === g.away_team) return g.away_team_abbr || g.away_team.slice(0, 3).toUpperCase();
+  return teamName ? teamName.slice(0, 3).toUpperCase() : '';
+}
+
+function scoreLine(g) {
+  const away = g.away_team_abbr || g.away_team;
+  const home = g.home_team_abbr || g.home_team;
+  if (isFinal(g)) return `Final${g.status === 'AOT' ? ' (OT)' : ''} · ${away} ${g.away_score} – ${home} ${g.home_score}`;
+  if (g.status === 'CANC') return 'Cancelled · no points';
+  if (g.status === 'PST') return `Postponed · ${kickoffLabel(g.kickoff_time)}`;
+  return `${kickoffLabel(g.kickoff_time)}${g.locked ? ' · locked' : ''}`;
+}
 
 // ---------- API ----------
 async function api(path, options = {}) {
@@ -218,7 +352,11 @@ async function api(path, options = {}) {
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   const res = await fetch(API_BASE + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Something went wrong');
+  if (!res.ok) {
+    const err = new Error(data.error || 'Something went wrong');
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -230,119 +368,12 @@ function saveSession(token, user) {
 }
 
 function logout() {
-  state.token = null;
-  state.user = null;
   localStorage.removeItem('pickem_token');
   localStorage.removeItem('pickem_user');
-  state.groups = [];
-  state.currentGroup = null;
-  render();
-}
-
-// ---------- data loading ----------
-async function loadGroups() {
-  const data = await api('/api/groups');
-  state.groups = data.groups;
-}
-
-async function loadCurrentWeek() {
-  if (state.currentWeekLoaded) return;
-  try {
-    const data = await api('/api/current-week');
-    state.seasonYear = data.season;
-    state.weekNumber = data.week;
-    state.currentWeekLoaded = true;
-  } catch (err) {
-    // Falls back to whatever week is already selected
-  }
-}
-
-async function loadGroupScreen(group) {
-  state.currentGroup = group;
-  state.role = group.role;
-  state.tab = 'picks';
-  await loadCurrentWeek();
-  await loadPicks();
-  render();
-}
-
-async function loadPicks() {
-  const q = `?season=${state.seasonYear}&week=${state.weekNumber}`;
-  const groupId = state.currentGroup.id;
-  const data = await api(`/api/groups/${groupId}/picks${q}`);
-  // Keep any tap that's still saving, so a reload never flips a pick back on screen
-  state.games = data.games.map((g) => {
-    g.saved_team = g.picked_team;
-    const pending = unsavedPicks[`${groupId}:${g.id}`];
-    if (pending !== undefined && !g.locked) g.picked_team = pending;
-    return g;
+  Object.assign(state, {
+    token: null, user: null, view: 'picks', games: null, groups: [], currentGroup: null,
+    member: null, memberData: null, standings: null, leaderboard: null, pool: null, groupForm: null,
   });
-  state.pickMode = data.pick_mode;
-}
-
-async function loadStandings() {
-  const q = `?season=${state.seasonYear}&week=${state.weekNumber}&type=${state.standingsType}`;
-  const data = await api(`/api/groups/${state.currentGroup.id}/standings${q}`);
-  state.standings = data.standings;
-}
-
-async function loadPool() {
-  const q = `?season=${state.seasonYear}&week=${state.weekNumber}`;
-  const data = await api(`/api/groups/${state.currentGroup.id}/pool${q}`);
-  state.pool = data;
-}
-
-// ---------- actions ----------
-async function handleAuthSubmit(e) {
-  e.preventDefault();
-  state.authError = '';
-  const form = new FormData(e.target);
-
-  if (state.authMode === 'signup' && form.get('password') !== form.get('confirmPassword')) {
-    state.authError = 'Passwords don\'t match';
-    render();
-    return;
-  }
-
-  state.busy = true; render();
-  try {
-    const path = state.authMode === 'login' ? '/api/login' : '/api/signup';
-    const body = state.authMode === 'login'
-      ? { email: form.get('email'), password: form.get('password') }
-      : { name: form.get('name'), email: form.get('email'), password: form.get('password') };
-    const data = await api(path, { method: 'POST', body: JSON.stringify(body) });
-    saveSession(data.token, data.user);
-    await loadGroups();
-    render();
-  } catch (err) {
-    state.authError = err.message;
-  } finally {
-    state.busy = false; render();
-  }
-}
-
-async function handleCreateGroup(e) {
-  e.preventDefault();
-  const form = new FormData(e.target);
-  const poolEnabled = form.get('pool_enabled') === 'on';
-  const data = await api('/api/groups', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: form.get('name'),
-      pool_enabled: poolEnabled,
-      pool_amount_per_person: poolEnabled ? Number(form.get('amount')) : null,
-    }),
-  });
-  await loadGroups();
-  const created = state.groups.find(g => g.id === data.group.id);
-  await loadGroupScreen(created);
-}
-
-async function handleJoinGroup(e) {
-  e.preventDefault();
-  const form = new FormData(e.target);
-  await api('/api/groups/join', { method: 'POST', body: JSON.stringify({ invite_code: form.get('code') }) });
-  await loadGroups();
   render();
 }
 
@@ -362,49 +393,228 @@ function showToast(message, kind = '') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
 }
 
-// ---------- picks: show on tap, save in the background ----------
-const unsavedPicks = {}; // "group:game" -> team on screen that the server hasn't confirmed yet
-const saveQueue = {};    // "group:game" -> newest pick waiting to be sent
-const saveLoops = {};    // "group:game" -> request loop currently sending that game's picks
+// ---------- data loading ----------
+const weekQuery = () => `season=${state.seasonYear}&week=${state.weekNumber}`;
 
-function makePick(gameId, team) {
-  const game = state.games.find((g) => g.id === gameId);
-  if (!game || game.locked || game.picked_team === team) return;
-  const key = `${state.currentGroup.id}:${gameId}`;
+async function loadCurrentWeek() {
+  if (state.currentWeekLoaded) return;
+  try {
+    const data = await api('/api/current-week');
+    state.seasonYear = data.season;
+    state.weekNumber = data.week;
+    state.currentWeekLoaded = true;
+  } catch (err) {
+    // Falls back to whatever week is already selected
+  }
+}
+
+async function loadGroups() {
+  const data = await api('/api/groups');
+  state.groups = data.groups;
+  if (state.currentGroup) {
+    state.currentGroup = state.groups.find((g) => g.id === state.currentGroup.id) || null;
+  }
+}
+
+async function loadPicks() {
+  const data = await api(`/api/picks?${weekQuery()}`);
+  // Keep any tap that's still saving, so a reload never flips a pick back on screen
+  state.games = data.games.map((g) => {
+    g.saved_team = g.picked_team;
+    if (unsavedPicks[g.id] !== undefined && !g.locked) g.picked_team = unsavedPicks[g.id];
+    return g;
+  });
+}
+
+async function loadStandings() {
+  const data = await api(`/api/groups/${state.currentGroup.id}/standings?${weekQuery()}&type=${state.standingsType}`);
+  state.standings = data.standings;
+}
+
+async function loadGroupDetail() {
+  const data = await api(`/api/groups/${state.currentGroup.id}`);
+  state.groupDetail = data.group;
+  state.groupMembers = data.members;
+  state.role = data.role;
+}
+
+async function loadPool() {
+  state.pool = await api(`/api/groups/${state.currentGroup.id}/pool?${weekQuery()}`);
+}
+
+async function loadMemberPicks() {
+  state.memberData = await api(`/api/groups/${state.currentGroup.id}/members/${state.member.id}/picks?${weekQuery()}`);
+}
+
+async function loadLeaderboard() {
+  state.leaderboard = await api(`/api/leaderboard?${weekQuery()}&type=${state.leaderboardType}`);
+}
+
+// Loads whatever the screen you're looking at needs
+async function refreshCurrent() {
+  try {
+    if (state.view === 'picks') await loadPicks();
+    else if (state.view === 'leaderboard') await loadLeaderboard();
+    else if (state.view === 'groups' && state.member) await loadMemberPicks();
+    else if (state.view === 'groups' && state.currentGroup && state.groupTab === 'standings') await loadStandings();
+    else if (state.view === 'groups' && state.currentGroup && state.groupTab === 'league') {
+      await Promise.all([loadGroupDetail(), state.currentGroup.pool_enabled ? loadPool() : null]);
+    } else if (state.view === 'groups') await loadGroups();
+  } catch (err) {
+    if (err.status === 401) return logout();
+    showToast(err.message, 'danger');
+  }
+  render();
+}
+
+// ---------- navigation ----------
+// Each tab remembers where you were; tapping the tab you're already on goes back to its start
+function goTo(view) {
+  if (view === state.view && view === 'groups') {
+    state.member = null;
+    state.currentGroup = null;
+  }
+  state.view = view;
+  window.scrollTo(0, 0);
+  render();
+  refreshCurrent();
+}
+
+async function openGroup(id) {
+  state.view = 'groups';
+  state.currentGroup = state.groups.find((g) => g.id === id) || null;
+  if (!state.currentGroup) return render();
+  state.role = state.currentGroup.role;
+  state.groupTab = 'standings';
+  state.standings = null;
+  state.member = null;
+  state.groupForm = null;
+  window.scrollTo(0, 0);
+  render();
+  await refreshCurrent();
+}
+
+function closeGroup() {
+  state.currentGroup = null;
+  state.member = null;
+  window.scrollTo(0, 0);
+  refreshCurrent();
+}
+
+function setGroupTab(tab) {
+  state.groupTab = tab;
+  render();
+  refreshCurrent();
+}
+
+function setStandingsType(type) {
+  state.standingsType = type;
+  state.standings = null;
+  render();
+  refreshCurrent();
+}
+
+function setLeaderboardType(type) {
+  state.leaderboardType = type;
+  state.leaderboard = null;
+  render();
+  refreshCurrent();
+}
+
+function openMember(userId) {
+  state.member = { id: Number(userId) };
+  state.memberData = null;
+  window.scrollTo(0, 0);
+  render();
+  refreshCurrent();
+}
+
+function closeMember() {
+  state.member = null;
+  window.scrollTo(0, 0);
+  render();
+  refreshCurrent();
+}
+
+function changeWeek(delta) {
+  state.weekNumber = Math.min(18, Math.max(1, state.weekNumber + delta));
+  if (state.view === 'picks') state.games = null;
+  if (state.member) state.memberData = null;
+  render();
+  refreshCurrent();
+}
+
+// ---------- auth ----------
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  state.authError = '';
+  const form = new FormData(e.target);
+
+  if (state.authMode === 'signup' && form.get('password') !== form.get('confirmPassword')) {
+    state.authError = "Passwords don't match";
+    render();
+    return;
+  }
+
+  state.busy = true; render();
+  try {
+    const path = state.authMode === 'login' ? '/api/login' : '/api/signup';
+    const body = state.authMode === 'login'
+      ? { email: form.get('email'), password: form.get('password') }
+      : { name: form.get('name'), email: form.get('email'), password: form.get('password') };
+    const data = await api(path, { method: 'POST', body: JSON.stringify(body) });
+    saveSession(data.token, data.user);
+    state.view = 'picks';
+    await Promise.all([loadGroups(), loadCurrentWeek()]);
+    await loadPicks();
+  } catch (err) {
+    state.authError = err.message;
+  } finally {
+    state.busy = false; render();
+  }
+}
+
+// ---------- picks: show on tap, save in the background ----------
+const unsavedPicks = {}; // game id -> team on screen that the server hasn't confirmed yet
+const saveQueue = {};    // game id -> newest pick waiting to be sent
+const saveLoops = {};    // game id -> request loop currently sending that game's picks
+
+function makePick(gameId, side) {
+  const game = (state.games || []).find((g) => g.id === gameId);
+  if (!game || game.locked) return;
+  const team = side === 'home' ? game.home_team : game.away_team;
+  if (game.picked_team === team) return;
 
   game.picked_team = team; // highlight right away
-  unsavedPicks[key] = team;
-  saveQueue[key] = { gameId, team, groupId: state.currentGroup.id };
+  unsavedPicks[gameId] = team;
+  saveQueue[gameId] = team;
   render();
 
-  if (!saveLoops[key]) {
-    saveLoops[key] = runSaveLoop(key).finally(() => { delete saveLoops[key]; });
+  if (!saveLoops[gameId]) {
+    saveLoops[gameId] = runSaveLoop(gameId).finally(() => { delete saveLoops[gameId]; });
   }
 }
 
 // Sends a game's picks one at a time, so if someone switches teams mid-save
 // the newest choice is always the last one the server receives.
-async function runSaveLoop(key) {
-  while (saveQueue[key]) {
-    const { gameId, team, groupId } = saveQueue[key];
-    delete saveQueue[key];
+async function runSaveLoop(gameId) {
+  while (saveQueue[gameId]) {
+    const team = saveQueue[gameId];
+    delete saveQueue[gameId];
     try {
-      await api('/api/picks', {
-        method: 'POST',
-        body: JSON.stringify({ game_id: gameId, group_id: groupId, picked_team: team }),
-      });
-      if (unsavedPicks[key] === team) delete unsavedPicks[key];
-      const g = state.games.find((x) => x.id === gameId);
-      if (g && state.currentGroup && state.currentGroup.id === groupId) g.saved_team = team;
+      await api('/api/picks', { method: 'POST', body: JSON.stringify({ game_id: gameId, picked_team: team }) });
+      if (unsavedPicks[gameId] === team) delete unsavedPicks[gameId];
+      const g = (state.games || []).find((x) => x.id === gameId);
+      if (g) g.saved_team = team;
     } catch (err) {
-      delete saveQueue[key];
-      delete unsavedPicks[key];
+      delete saveQueue[gameId];
+      delete unsavedPicks[gameId];
       // Undo on screen, then refresh in case the game just kicked off
-      const g = state.games.find((x) => x.id === gameId);
-      if (g && state.currentGroup && state.currentGroup.id === groupId) g.picked_team = g.saved_team ?? null;
+      const g = (state.games || []).find((x) => x.id === gameId);
+      if (g) g.picked_team = g.saved_team ?? null;
       render();
       showToast(`Pick not saved: ${err.message}`, 'danger');
-      try { await loadPicks(); render(); } catch (e) { /* offline — keep the undone state */ }
+      if (state.view === 'picks') { try { await loadPicks(); render(); } catch (e) { /* offline */ } }
       return;
     }
   }
@@ -415,163 +625,141 @@ function waitForPickSaves() {
 }
 
 // Picks already save on every tap. Submitting re-reads them from the server to confirm
-// every one landed, then tells the player their lineup is in.
+// every one landed, then takes you to your group.
 async function submitLineup() {
   try {
     await waitForPickSaves();
     await loadPicks();
     render();
-    const stillOpen = state.games.filter(g => !g.locked && !g.picked_team).length;
+    const stillOpen = state.games.filter((g) => !g.locked && !g.picked_team).length;
     if (stillOpen > 0) {
-      showToast(`${stillOpen} open game${stillOpen === 1 ? '' : 's'} still need${stillOpen === 1 ? 's' : ''} a pick`, 'danger');
+      showToast(`${plural(stillOpen, 'open game')} still need${stillOpen === 1 ? 's' : ''} a pick`, 'danger');
       return;
     }
-    showToast('Lineup submitted ✓ You can change any pick until its game kicks off.', 'success');
+    await loadGroups().catch(() => {});
+    if (state.groups.length === 1) {
+      showToast('Lineup submitted ✓ Here’s how your group stacks up.', 'success');
+      openGroup(state.groups[0].id);
+    } else if (state.groups.length > 1) {
+      showToast('Lineup submitted ✓ Your picks count in every group.', 'success');
+      state.currentGroup = null;
+      goTo('groups');
+    } else {
+      showToast('Lineup submitted ✓ Create or join a group to play with friends.', 'success');
+      state.currentGroup = null;
+      goTo('groups');
+    }
   } catch (err) {
-    showToast('Couldn\'t reach the server — check your connection and try again.', 'danger');
+    showToast("Couldn't reach the server — check your connection and try again.", 'danger');
+  }
+}
+
+// ---------- group actions ----------
+function toggleGroupForm(kind) {
+  state.groupForm = state.groupForm === kind ? null : kind;
+  render();
+}
+
+async function handleCreateGroup(e) {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const poolEnabled = form.get('pool_enabled') === 'on';
+  try {
+    const data = await api('/api/groups', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: form.get('name'),
+        pool_enabled: poolEnabled,
+        pool_amount_per_person: poolEnabled ? Number(form.get('amount')) : null,
+      }),
+    });
+    await loadGroups();
+    openGroup(data.group.id);
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function handleJoinGroup(e) {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  try {
+    const data = await api('/api/groups/join', { method: 'POST', body: JSON.stringify({ invite_code: form.get('code') }) });
+    await loadGroups();
+    showToast(`Joined ${data.group.name}`, 'success');
+    openGroup(data.group.id);
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
+}
+
+async function saveGroupSettings(e) {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const poolEnabled = form.get('pool_enabled') === 'on';
+  const body = { name: form.get('name'), pool_enabled: poolEnabled };
+  if (poolEnabled) body.pool_amount_per_person = Number(form.get('amount'));
+  try {
+    await api(`/api/groups/${state.currentGroup.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    await loadGroups();
+    showToast('League settings saved', 'success');
+    refreshCurrent();
+  } catch (err) {
+    showToast(err.message, 'danger');
   }
 }
 
 async function markPaid(userId) {
-  await api(`/api/groups/${state.currentGroup.id}/pool/${userId}/mark-paid?season=${state.seasonYear}&week=${state.weekNumber}`, { method: 'POST' });
-  await loadPool();
-  render();
+  try {
+    await api(`/api/groups/${state.currentGroup.id}/pool/${userId}/mark-paid?${weekQuery()}`, { method: 'POST' });
+    await loadPool();
+    render();
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
 }
 
 async function copyInviteCode() {
-  await navigator.clipboard.writeText(state.currentGroup.invite_code);
-  showToast('Invite code copied', 'success');
+  try {
+    await navigator.clipboard.writeText(state.currentGroup.invite_code);
+    showToast('Invite code copied', 'success');
+  } catch (err) {
+    showToast(`Invite code: ${state.currentGroup.invite_code}`);
+  }
 }
 
-function changeWeek(delta) {
-  state.weekNumber = Math.min(18, Math.max(1, state.weekNumber + delta));
-  if (state.tab === 'picks') loadPicks().then(render);
-  else if (state.tab === 'standings') loadStandings().then(render);
-  else if (state.tab === 'commissioner') loadPool().then(render);
-  else render();
+async function removeMember(userId) {
+  if (!confirm('Remove this member from the group?')) return;
+  try {
+    await api(`/api/groups/${state.currentGroup.id}/members/${userId}`, { method: 'DELETE' });
+    await loadGroups();
+    refreshCurrent();
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
 }
 
-async function switchTab(tab) {
-  state.tab = tab;
-  if (tab === 'picks') await loadPicks();
-  if (tab === 'standings') await loadStandings();
-  if (tab === 'commissioner') await loadPool();
-  render();
+async function leaveGroup() {
+  if (!confirm('Leave this group?')) return;
+  try {
+    await api(`/api/groups/${state.currentGroup.id}/leave`, { method: 'POST' });
+    closeGroup();
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
 }
 
-// ---------- screens ----------
-function screenAuth() {
-  const isLogin = state.authMode === 'login';
-  return `
-    <div class="header" style="margin-top:60px; text-align:center;">
-      <h1 style="font-size:26px;">Tossup</h1>
-      <p class="eyebrow">Weekly picks with the group</p>
-    </div>
-    <form class="card stack" onsubmit="handleAuthSubmit(event)">
-      ${isLogin ? '' : `<div><label>Name</label><input name="name" required></div>`}
-      <div><label>Email</label><input name="email" type="email" required></div>
-      <div><label>Password</label><input name="password" type="password" required minlength="8"></div>
-      ${isLogin ? '' : `<div><label>Confirm password</label><input name="confirmPassword" type="password" required minlength="8"></div>`}
-      ${state.authError ? `<div class="error">${state.authError}</div>` : ''}
-      <button class="primary full" ${state.busy ? 'disabled' : ''}>${isLogin ? 'Log in' : 'Create account'}</button>
-    </form>
-    <div style="text-align:center; margin-top:14px;">
-      <button class="toplink" onclick="state.authMode='${isLogin ? 'signup' : 'login'}'; state.authError=''; render()">
-        ${isLogin ? "New here? Create an account" : 'Already have an account? Log in'}
-      </button>
-    </div>
-  `;
+async function deleteGroup() {
+  if (!confirm('Delete this group permanently? This cannot be undone.')) return;
+  try {
+    await api(`/api/groups/${state.currentGroup.id}`, { method: 'DELETE' });
+    closeGroup();
+  } catch (err) {
+    showToast(err.message, 'danger');
+  }
 }
 
-function screenGroups() {
-  const rows = state.groups.map(g => `
-    <div class="card" style="cursor:pointer;" onclick="selectGroup(${g.id})">
-      <div class="row between">
-        <div class="display" style="font-size:16px;">${g.name}</div>
-        <span class="muted">›</span>
-      </div>
-      ${g.pool_enabled ? `<div class="small muted" style="margin-top:4px;">Pool: $${g.pool_amount_per_person}/person</div>` : `<div class="small muted" style="margin-top:4px;">No pool · bragging rights only</div>`}
-    </div>
-  `).join('');
-
-  return `
-    <div class="header row between">
-      <h1 style="font-size:20px;">My groups</h1>
-      <button class="ghost" onclick="logout()">Log out</button>
-    </div>
-    <div class="row" style="margin-bottom:14px;">
-      <button class="full" onclick="toggleForm('create')">+ Create group</button>
-      <button class="full" onclick="toggleForm('join')">Join with code</button>
-    </div>
-    <div id="group-form"></div>
-    <div class="stack">${rows || '<p class="muted small">No groups yet — create one or join with a code.</p>'}</div>
-  `;
-}
-
-function formCreateGroup() {
-  return `
-    <form class="card stack" onsubmit="handleCreateGroup(event)" style="margin-bottom:14px;">
-      <div><label>League name</label><input name="name" placeholder="e.g. Sunday Funday" required></div>
-      <label class="row" style="cursor:pointer;">
-        <input type="checkbox" name="pool_enabled" style="width:auto;" onchange="document.getElementById('amount-field').style.display=this.checked?'block':'none'">
-        <span class="small">Enable a weekly pool</span>
-      </label>
-      <div id="amount-field" style="display:none;"><label>Amount per person</label><input name="amount" type="number" min="1" step="0.5" value="5"></div>
-      <button class="primary full">Create group</button>
-    </form>
-  `;
-}
-
-function formJoinGroup() {
-  return `
-    <form class="card stack" onsubmit="handleJoinGroup(event)" style="margin-bottom:14px;">
-      <div><label>Invite code</label><input name="code" required style="text-transform:uppercase;"></div>
-      <button class="primary full">Join group</button>
-    </form>
-  `;
-}
-
-function toggleForm(kind) {
-  const el = document.getElementById('group-form');
-  el.innerHTML = kind === 'create' ? formCreateGroup() : formJoinGroup();
-}
-
-async function selectGroup(id) {
-  const group = state.groups.find(g => g.id === id);
-  await loadGroupScreen(group);
-}
-
-function weekSwitcher() {
-  return `
-    <div class="row between" style="margin-bottom:14px;">
-      <button onclick="changeWeek(-1)">‹</button>
-      <div class="display" style="font-size:15px;">Week ${state.weekNumber}</div>
-      <button onclick="changeWeek(1)">›</button>
-    </div>
-  `;
-}
-
-function screenGroupHeader() {
-  return `
-    <div class="header row between">
-      <div>
-        <h1 style="font-size:20px;">${state.currentGroup.name}</h1>
-        <div class="eyebrow small">${state.pickMode === 'per_group' ? 'Per-group picks' : 'Global picks'}</div>
-      </div>
-      <div class="row" style="gap:6px;">
-        <button class="ghost" onclick="openGroupSettings()">⚙</button>
-        <button class="ghost" onclick="backToGroups()">Groups</button>
-      </div>
-    </div>
-  `;
-}
-
-function backToGroups() {
-  state.currentGroup = null;
-  render();
-}
-
-// Main, secondary and third team colors (no logos — colors only)
+// ---------- team colors (colors only — no logos) ----------
 const TEAM_COLORS = {
   ARI: ['#97233F', '#000000', '#FFB612'], ATL: ['#A71930', '#000000', '#A5ACAF'],
   BAL: ['#241773', '#000000', '#9E7C0C'], BUF: ['#00338D', '#C60C30', '#FFFFFF'],
@@ -591,6 +779,7 @@ const TEAM_COLORS = {
   TEN: ['#0C2340', '#4B92DB', '#C8102E'], WAS: ['#5A1414', '#FFB612', '#FFFFFF'],
 };
 TEAM_COLORS.LA = TEAM_COLORS.LAR;
+const colorsFor = (abbr) => TEAM_COLORS[abbr] || ['#3a4654', '#55616f', '#6b7785'];
 
 // White or near-black abbreviation text, whichever reads better on the team's main color
 function inkFor(hex) {
@@ -599,22 +788,23 @@ function inkFor(hex) {
     return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
   };
   const lum = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-  const onWhite = 1.05 / (lum + 0.05);
-  const onDark = (lum + 0.05) / 0.0587;
-  return onWhite >= onDark ? '#FFFFFF' : '#101820';
+  return 1.05 / (lum + 0.05) >= (lum + 0.05) / 0.0587 ? '#FFFFFF' : '#101820';
 }
 
-function teamButton(g, side, locked) {
+function teamButton(g, side) {
   const name = side === 'home' ? g.home_team : g.away_team;
-  const abbr = (side === 'home' ? g.home_team_abbr : g.away_team_abbr) || name.slice(0, 3).toUpperCase();
+  const abbr = abbrFor(g, name);
   const nickname = name.split(' ').pop();
   const selected = g.picked_team === name;
-  const finished = (g.status === 'FT' || g.status === 'AOT') && g.final_winner;
-  const result = finished ? (g.final_winner === name ? 'winner' : 'loser') : '';
-  const [c1, c2, c3] = TEAM_COLORS[abbr] || ['#3a4654', '#55616f', '#6b7785'];
+  const final = isFinal(g);
+  const result = final && g.final_winner ? (g.final_winner === name ? 'winner' : 'loser') : '';
+  // Your pick on a finished game: green if right, red if wrong, neutral on a tie
+  let grade = '';
+  if (selected && final) grade = !g.final_winner ? 'push' : g.final_winner === name ? 'correct' : 'wrong';
+  const [c1, c2, c3] = colorsFor(abbr);
   return `
-    <button class="team-btn ${selected ? 'selected' : ''} ${result}" style="--ink:${inkFor(c1)}" ${locked ? 'disabled' : ''}
-      aria-pressed="${selected}" aria-label="Pick ${name}" onclick="makePick(${g.id}, '${name}')">
+    <button class="team-btn ${selected ? 'selected' : ''} ${result} ${grade}" style="--ink:${inkFor(c1)}" ${g.locked ? 'disabled' : ''}
+      aria-pressed="${selected}" aria-label="Pick ${esc(name)}" onclick="makePick(${Number(g.id)}, '${side}')">
       <span class="team-stripes" aria-hidden="true">
         <svg viewBox="0 0 58 48" preserveAspectRatio="none">
           <polygon points="0,0 55,0 33,48 0,48" fill="${c3}"/>
@@ -622,31 +812,85 @@ function teamButton(g, side, locked) {
           <polygon points="0,0 46,0 24,48 0,48" fill="${c1}"/>
         </svg>
       </span>
-      <span class="team-abbr">${abbr}</span>
-      <span class="team-name">${nickname}</span>
-      ${selected ? '<span class="team-check" aria-hidden="true">✓</span>' : ''}
+      <span class="team-abbr">${esc(abbr)}</span>
+      <span class="team-name">${esc(nickname)}</span>
+      ${selected ? `<span class="team-check ${grade}" aria-hidden="true">${grade === 'wrong' ? '✗' : '✓'}</span>` : ''}
     </button>`;
 }
 
+// Small colored tag with the team abbreviation (used in the compact picks list)
+function teamTag(abbr, grade = '') {
+  const [c1, c2, c3] = colorsFor(abbr);
+  return `
+    <span class="mini-tag ${grade}" style="color:${inkFor(c1)}">
+      <svg viewBox="0 0 54 26" preserveAspectRatio="none" aria-hidden="true">
+        <rect width="54" height="26" fill="${c1}"/>
+        <polygon points="42,0 54,0 54,26 32,26" fill="${c3}"/>
+        <polygon points="42,0 47,0 37,26 32,26" fill="${c2}"/>
+      </svg>
+      <span>${esc(abbr)}</span>
+    </span>`;
+}
+
+// ---------- shared pieces ----------
+const ICONS = {
+  picks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  groups: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  leaderboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+};
+
+function navbar() {
+  const tab = (view, label) => `
+    <button class="navbtn ${state.view === view ? 'active' : ''}" onclick="goTo('${view}')" ${state.view === view ? 'aria-current="page"' : ''}>
+      ${ICONS[view]}<span>${label}</span>
+    </button>`;
+  return `<nav class="navbar"><div class="navbar-inner">${tab('picks', 'Picks')}${tab('groups', 'Groups')}${tab('leaderboard', 'Leaderboard')}</div></nav>`;
+}
+
+function weekSwitcher() {
+  return `
+    <div class="row between" style="margin-bottom:14px;">
+      <button onclick="changeWeek(-1)" aria-label="Previous week" ${state.weekNumber <= 1 ? 'disabled' : ''}>‹</button>
+      <div class="display" style="font-size:16px;">Week ${state.weekNumber}</div>
+      <button onclick="changeWeek(1)" aria-label="Next week" ${state.weekNumber >= 18 ? 'disabled' : ''}>›</button>
+    </div>`;
+}
+
+function record(right, wrong) {
+  return `${right}–${wrong}`;
+}
+
+// ---------- screens: auth ----------
+function screenAuth() {
+  const isLogin = state.authMode === 'login';
+  return `
+    <div class="header" style="margin-top:60px; text-align:center;">
+      <h1 style="font-size:28px;">Tossup</h1>
+      <p class="eyebrow">Weekly NFL picks with your friends</p>
+    </div>
+    <form class="card stack" onsubmit="handleAuthSubmit(event)">
+      ${isLogin ? '' : `<div><label>Name</label><input name="name" maxlength="40" autocomplete="name" required></div>`}
+      <div><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
+      <div><label>Password</label><input name="password" type="password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" required minlength="8"></div>
+      ${isLogin ? '' : `<div><label>Confirm password</label><input name="confirmPassword" type="password" autocomplete="new-password" required minlength="8"></div>`}
+      ${state.authError ? `<div class="error">${esc(state.authError)}</div>` : ''}
+      <button class="primary full" ${state.busy ? 'disabled' : ''}>${isLogin ? 'Log in' : 'Create account'}</button>
+    </form>
+    <div style="text-align:center; margin-top:14px;">
+      <button class="toplink" onclick="state.authMode='${isLogin ? 'signup' : 'login'}'; state.authError=''; render()">
+        ${isLogin ? 'New here? Create an account' : 'Already have an account? Log in'}
+      </button>
+    </div>`;
+}
+
+// ---------- screens: picks ----------
 function screenPicks() {
-  const now = Date.now();
-  const rows = state.games.map(g => {
-    const locked = g.locked;
-    const time = new Date(g.kickoff_time).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-    const finished = g.status === 'FT' || g.status === 'AOT';
-    const live = ['Q1', 'Q2', 'Q3', 'Q4', 'HT', 'OT'].includes(g.status);
-    let statusLine = `${time}${locked ? ' · locked' : ''}`;
-    if (finished) {
-      statusLine = `Final${g.status === 'AOT' ? ' (OT)' : ''} · ${g.away_team_abbr || g.away_team} ${g.away_score} – ${g.home_team_abbr || g.home_team} ${g.home_score}`;
-    } else if (live) {
-      statusLine = `Live · ${g.away_team_abbr || g.away_team} ${g.away_score ?? 0} – ${g.home_team_abbr || g.home_team} ${g.home_score ?? 0}`;
-    } else if (g.status === 'CANC') {
-      statusLine = 'Cancelled · no points';
-    } else if (g.status === 'PST') {
-      statusLine = `Postponed · ${time}`;
-    }
+  if (!state.games) {
+    return `<div class="header"><h1>Picks</h1></div>${weekSwitcher()}<div class="empty">Loading games…</div>`;
+  }
+  const rows = state.games.map((g) => {
     let result = '';
-    if (finished && g.picked_team) {
+    if (isFinal(g) && g.picked_team) {
       if (!g.final_winner) result = '<span class="pill">Tie</span>';
       else if (g.picked_team === g.final_winner) result = '<span class="pill success">✓ +1</span>';
       else result = '<span class="pill danger">✗</span>';
@@ -654,39 +898,38 @@ function screenPicks() {
     return `
       <div class="card">
         <div class="row between" style="margin-bottom:8px;">
-          <span class="tiny muted">${statusLine}</span>
+          <span class="tiny muted">${esc(scoreLine(g))}</span>
           ${result}
         </div>
         <div class="matchup">
-          ${teamButton(g, 'away', locked)}
+          ${teamButton(g, 'away')}
           <span class="vs muted" aria-hidden="true">@</span>
-          ${teamButton(g, 'home', locked)}
+          ${teamButton(g, 'home')}
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
 
   const total = state.games.length;
-  const picked = state.games.filter(g => g.picked_team).length;
-  const openGames = state.games.filter(g => !g.locked);
-  const openUnpicked = openGames.filter(g => !g.picked_team).length;
-  const missed = state.games.filter(g => g.locked && !g.picked_team).length;
-  const missedNote = missed > 0
-    ? `<div class="tiny muted" style="margin-top:4px;">${missed} game${missed === 1 ? '' : 's'} locked without a pick (0 points)</div>`
-    : '';
+  const picked = state.games.filter((g) => g.picked_team).length;
+  const openGames = state.games.filter((g) => !g.locked);
+  const openUnpicked = openGames.filter((g) => !g.picked_team).length;
+  const missed = state.games.filter((g) => g.locked && !g.picked_team).length;
+  const right = state.games.filter((g) => g.final_winner && g.picked_team === g.final_winner).length;
+  const wrong = state.games.filter((g) => g.final_winner && g.picked_team && g.picked_team !== g.final_winner).length;
+  const missedNote = missed > 0 ? `<div class="tiny muted" style="margin-top:4px;">${plural(missed, 'game')} locked without a pick (0 points)</div>` : '';
 
   let summaryBar = '';
   if (total > 0 && openGames.length === 0) {
     summaryBar = `
       <div class="card" style="margin-top:4px;">
-        <div class="small">Week locked · ${picked} of ${total} picked</div>
+        <div class="small">Week ${state.weekNumber} locked · <span class="success-text">${right} right</span> · <span style="color:var(--danger)">${wrong} wrong</span></div>
         ${missedNote}
       </div>`;
   } else if (total > 0 && openUnpicked > 0) {
     summaryBar = `
       <div class="card row between" style="margin-top:4px;">
         <div>
-          <div class="small error" style="margin-top:0;">${picked} of ${total} picked · ${openUnpicked} open game${openUnpicked === 1 ? '' : 's'} left</div>
+          <div class="small error" style="margin-top:0;">${picked} of ${total} picked · ${plural(openUnpicked, 'open game')} left</div>
           ${missedNote}
         </div>
         <button class="primary" disabled>Submit lineup</button>
@@ -703,169 +946,264 @@ function screenPicks() {
   }
 
   return `
-    ${screenGroupHeader()}
+    <div class="header">
+      <h1>Picks</h1>
+      <div class="eyebrow">One set of picks · counts in every group</div>
+    </div>
     ${weekSwitcher()}
-    ${groupTabs()}
-    <div class="stack">${rows || '<p class="muted small">No games loaded for this week yet.</p>'}</div>
-    ${summaryBar}
-  `;
+    <div class="stack">${rows || '<div class="empty">No games loaded for this week yet.</div>'}</div>
+    ${summaryBar}`;
 }
 
-function screenStandings() {
-  const rows = state.standings.map((s, i) => `
-    <div class="card row" style="${s.id === state.user.id ? 'border-color:var(--accent);border-width:2px;' : ''}">
-      <span class="muted small" style="width:16px;">${i + 1}</span>
-      <span class="avatar">${s.name[0].toUpperCase()}</span>
-      <div style="flex:1;">
-        <div class="small" style="font-weight:500;">${s.id === state.user.id ? 'You' : s.name}</div>
+// ---------- screens: groups ----------
+function screenGroupsList() {
+  const cards = state.groups.map((g) => `
+    <button class="player-row" onclick="openGroup(${Number(g.id)})">
+      <div class="who">
+        <div class="nm" style="font-family:'Oswald',sans-serif; font-weight:500; font-size:17px;">${esc(g.name)}</div>
+        <div class="rec">${plural(g.member_count || 1, 'member')} · ${g.pool_enabled ? `$${esc(g.pool_amount_per_person)} weekly pool` : 'bragging rights'}</div>
       </div>
-      <span class="display" style="font-size:16px;">${s.points ?? 0}</span>
-    </div>
-  `).join('');
+      ${g.role === 'commissioner' ? '<span class="chip">Commish</span>' : ''}
+      <span class="chev">›</span>
+    </button>`).join('');
 
-  return `
-    ${screenGroupHeader()}
-    <div class="tabs">
-      <button class="${state.standingsType === 'weekly' ? 'active' : ''}" onclick="setStandingsType('weekly')">This week</button>
-      <button class="${state.standingsType === 'season' ? 'active' : ''}" onclick="setStandingsType('season')">Season</button>
-    </div>
-    ${state.standingsType === 'weekly' ? weekSwitcher() : ''}
-    ${groupTabs()}
-    <div class="stack">${rows || '<p class="muted small">No standings yet.</p>'}</div>
-  `;
-}
-
-async function setStandingsType(type) {
-  state.standingsType = type;
-  await loadStandings();
-  render();
-}
-
-function screenCommissioner() {
-  if (!state.pool) return screenGroupHeader() + weekSwitcher() + groupTabs();
-  if (!state.pool.pool_enabled) {
-    return `${screenGroupHeader()}${groupTabs()}<p class="muted small">This group doesn't have a pool enabled.</p>`;
-  }
-  const rows = state.pool.members.map(m => `
-    <div class="card row">
-      <span class="avatar">${m.name[0].toUpperCase()}</span>
-      <div style="flex:1;" class="small">${m.name}</div>
-      ${m.paid ? `<span class="pill success">Paid</span>` : `<button onclick="markPaid(${m.id})">Mark paid</button>`}
-    </div>
-  `).join('');
-
-  return `
-    ${screenGroupHeader()}
-    ${weekSwitcher()}
-    ${groupTabs()}
-    <div class="card">
-      <div class="display" style="font-size:15px; margin-bottom:6px;">Week ${state.weekNumber} pool</div>
-      <div class="small muted">$${state.currentGroup.pool_amount_per_person} × ${state.pool.members.length} players = $${state.pool.total} total</div>
-      <div class="tiny muted" style="margin-top:2px;">Members pay you directly on Venmo</div>
-    </div>
-    <div class="small muted" style="margin:14px 0 6px;">Who's paid in for week ${state.weekNumber}</div>
-    <div class="stack">${rows}</div>
-    <div class="card row between" style="margin-top:14px;">
-      <div>
-        <div class="small muted">Invite code</div>
-        <div class="display" style="font-size:16px; letter-spacing:1px;">${state.currentGroup.invite_code}</div>
-      </div>
-      <button onclick="copyInviteCode()">Copy</button>
-    </div>
-  `;
-}
-
-function groupTabs() {
-  const showCommish = state.role === 'commissioner';
-  return `
-    <div class="navbar"><div class="navbar-inner">
-      <button class="navbtn ${state.tab === 'picks' ? 'active' : ''}" onclick="switchTab('picks')">Picks</button>
-      <button class="navbtn ${state.tab === 'standings' ? 'active' : ''}" onclick="switchTab('standings')">Standings</button>
-      ${showCommish ? `<button class="navbtn ${state.tab === 'commissioner' ? 'active' : ''}" onclick="switchTab('commissioner')">Commish</button>` : ''}
-    </div></div>
-  `;
-}
-
-function screenGroupSettings() {
-  const isCommish = state.role === 'commissioner';
-  const membersRows = (state.groupMembers || []).map(m => `
-    <div class="card row">
-      <span class="avatar">${m.name[0].toUpperCase()}</span>
-      <div style="flex:1;" class="small">${m.name}${m.role === 'commissioner' ? ' · commissioner' : ''}</div>
-      ${isCommish && m.role !== 'commissioner' ? `<button onclick="removeMember(${m.id})">Remove</button>` : ''}
-    </div>
-  `).join('');
+  const form = state.groupForm === 'create' ? `
+    <form class="card stack" onsubmit="handleCreateGroup(event)">
+      <div><label>League name</label><input name="name" maxlength="40" placeholder="e.g. Sunday Funday" required></div>
+      <label class="row" style="cursor:pointer; margin:0;">
+        <input type="checkbox" name="pool_enabled" style="width:auto;" onchange="document.getElementById('amount-field').style.display=this.checked?'block':'none'">
+        <span class="small" style="color:var(--text);">Enable a weekly pool</span>
+      </label>
+      <div id="amount-field" style="display:none;"><label>Amount per person</label><input name="amount" type="number" min="1" max="1000" step="0.5" value="5"></div>
+      <button class="primary full">Create group</button>
+    </form>` : state.groupForm === 'join' ? `
+    <form class="card stack" onsubmit="handleJoinGroup(event)">
+      <div><label>Invite code</label><input name="code" required autocapitalize="characters" style="text-transform:uppercase;"></div>
+      <button class="primary full">Join group</button>
+    </form>` : '';
 
   return `
     <div class="header row between">
-      <h1 style="font-size:20px;">Group settings</h1>
-      <button class="ghost" onclick="closeGroupSettings()">Back</button>
+      <div><h1>Groups</h1><div class="eyebrow">Your leagues</div></div>
+      <button class="ghost" onclick="logout()">Log out</button>
     </div>
-    ${isCommish ? `
-      <form class="card stack" onsubmit="saveGroupSettings(event)">
-        <div><label>League name</label><input name="name" value="${state.groupDetail ? state.groupDetail.name : state.currentGroup.name}" required></div>
-        <button class="primary full">Save changes</button>
-      </form>
-    ` : ''}
-    <div class="small muted" style="margin:14px 0 6px;">Members</div>
-    <div class="stack">${membersRows}</div>
-    ${isCommish
-      ? `<button class="full" style="margin-top:16px; border-color:var(--danger); color:var(--danger);" onclick="deleteGroup()">Delete group</button>`
-      : `<button class="full" style="margin-top:16px; border-color:var(--danger); color:var(--danger);" onclick="leaveGroup()">Leave group</button>`
-    }
-  `;
+    <div class="row" style="margin-bottom:12px;">
+      <button class="full ${state.groupForm === 'create' ? 'primary' : ''}" onclick="toggleGroupForm('create')">+ Create group</button>
+      <button class="full ${state.groupForm === 'join' ? 'primary' : ''}" onclick="toggleGroupForm('join')">Join with code</button>
+    </div>
+    ${form}
+    <div class="stack">${cards || '<div class="empty">No groups yet — create one or join with a code.</div>'}</div>`;
 }
 
-async function openGroupSettings() {
-  state.tab = 'settings';
-  await loadGroupDetail();
-  render();
+function screenGroup() {
+  const g = state.currentGroup;
+  const isCommish = state.role === 'commissioner';
+  let body = '';
+
+  if (state.groupTab === 'standings') {
+    const rows = (state.standings || []).map((s) => {
+      const me = state.user && s.id === state.user.id;
+      return `
+        <button class="player-row ${me ? 'me' : ''}" onclick="openMember(${Number(s.id)})" aria-label="See ${esc(s.name)}'s picks">
+          <span class="rank">${s.rank}</span>
+          <span class="avatar">${esc((s.name || '?')[0].toUpperCase())}</span>
+          <div class="who">
+            <div class="nm">${me ? 'You' : esc(s.name)}${s.role === 'commissioner' ? ' <span class="chip" style="margin-left:4px;">Commish</span>' : ''}</div>
+            <div class="rec">${record(s.points, s.wrong)}</div>
+          </div>
+          <span class="pts">${s.points}</span>
+          <span class="chev">›</span>
+        </button>`;
+    }).join('');
+    body = `
+      <div class="tabs sub">
+        <button class="${state.standingsType === 'weekly' ? 'active' : ''}" onclick="setStandingsType('weekly')">This week</button>
+        <button class="${state.standingsType === 'season' ? 'active' : ''}" onclick="setStandingsType('season')">Season</button>
+      </div>
+      ${state.standingsType === 'weekly' ? weekSwitcher() : ''}
+      <div class="tiny muted" style="margin:-4px 0 10px;">Tap a name to see their picks</div>
+      <div class="stack">${state.standings ? rows || '<div class="empty">No players yet.</div>' : '<div class="empty">Loading standings…</div>'}</div>`;
+  } else if (isCommish) {
+    body = screenCommishTab();
+  } else {
+    body = screenOverviewTab();
+  }
+
+  return `
+    <button class="backlink" onclick="closeGroup()">‹ Groups</button>
+    <div class="header">
+      <h1>${esc(g.name)}</h1>
+      <div class="eyebrow">${plural(g.member_count || 1, 'member')}${isCommish ? ' · You’re the commissioner' : ''}</div>
+    </div>
+    <div class="tabs">
+      <button class="${state.groupTab === 'standings' ? 'active' : ''}" onclick="setGroupTab('standings')">Standings</button>
+      <button class="${state.groupTab === 'league' ? 'active' : ''}" onclick="setGroupTab('league')">${isCommish ? 'Commish' : 'Overview'}</button>
+    </div>
+    ${body}`;
 }
 
-function closeGroupSettings() {
-  state.tab = 'picks';
-  loadPicks().then(render);
+function inviteCard() {
+  return `
+    <div class="card row between">
+      <div>
+        <div class="small muted">Invite code</div>
+        <div class="display" style="font-size:18px; letter-spacing:1px;">${esc(state.currentGroup.invite_code)}</div>
+      </div>
+      <button onclick="copyInviteCode()">Copy</button>
+    </div>`;
 }
 
-async function loadGroupDetail() {
-  const data = await api(`/api/groups/${state.currentGroup.id}`);
-  state.groupDetail = data.group;
-  state.groupMembers = data.members;
-  state.role = data.role;
+function membersList(allowRemove) {
+  return (state.groupMembers || []).map((m) => `
+    <div class="player-row" style="padding:9px 12px;">
+      <span class="avatar">${esc((m.name || '?')[0].toUpperCase())}</span>
+      <div class="who"><div class="nm">${state.user && m.id === state.user.id ? 'You' : esc(m.name)}</div></div>
+      ${m.role === 'commissioner' ? '<span class="chip">Commish</span>' : ''}
+      ${allowRemove && m.role !== 'commissioner' ? `<button onclick="removeMember(${Number(m.id)})" style="padding:6px 10px; font-size:13px;">Remove</button>` : ''}
+    </div>`).join('');
 }
 
-async function saveGroupSettings(e) {
-  e.preventDefault();
-  const form = new FormData(e.target);
-  const newName = form.get('name');
-  await api(`/api/groups/${state.currentGroup.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ name: newName }),
-  });
-  state.currentGroup.name = newName;
-  await loadGroupDetail();
-  render();
+function screenCommishTab() {
+  const g = state.currentGroup;
+  const detail = state.groupDetail || g;
+  const poolOn = !!detail.pool_enabled;
+  let poolSection = '';
+  if (poolOn) {
+    const rows = state.pool && state.pool.members ? state.pool.members.map((m) => `
+      <div class="player-row" style="padding:9px 12px;">
+        <span class="avatar">${esc((m.name || '?')[0].toUpperCase())}</span>
+        <div class="who"><div class="nm">${state.user && m.id === state.user.id ? 'You' : esc(m.name)}</div></div>
+        ${m.paid ? '<span class="pill success">Paid</span>' : `<button onclick="markPaid(${Number(m.id)})" style="padding:6px 10px; font-size:13px;">Mark paid</button>`}
+      </div>`).join('') : '<div class="empty">Loading pool…</div>';
+    poolSection = `
+      <div class="section-label">Weekly pool</div>
+      ${weekSwitcher()}
+      <div class="card">
+        <div class="display" style="font-size:16px;">Week ${state.weekNumber} pool</div>
+        ${state.pool && state.pool.members ? `<div class="small muted" style="margin-top:4px;">$${esc(detail.pool_amount_per_person)} × ${plural(state.pool.members.length, 'player')} = $${esc(state.pool.total)} total</div>` : ''}
+        <div class="tiny muted" style="margin-top:2px;">Members pay you directly on Venmo — mark them paid here</div>
+      </div>
+      <div class="stack">${rows}</div>`;
+  }
+
+  return `
+    <div class="section-label">League settings</div>
+    <form class="card stack" onsubmit="saveGroupSettings(event)">
+      <div><label>League name</label><input name="name" maxlength="40" value="${esc(detail.name)}" required></div>
+      <label class="row" style="cursor:pointer; margin:0;">
+        <input type="checkbox" name="pool_enabled" style="width:auto;" ${poolOn ? 'checked' : ''} onchange="document.getElementById('amount-edit').style.display=this.checked?'block':'none'">
+        <span class="small" style="color:var(--text);">Weekly pool</span>
+      </label>
+      <div id="amount-edit" style="display:${poolOn ? 'block' : 'none'};"><label>Amount per person</label><input name="amount" type="number" min="1" max="1000" step="0.5" value="${esc(detail.pool_amount_per_person || 5)}"></div>
+      <button class="primary full">Save settings</button>
+    </form>
+    ${poolSection}
+    <div class="section-label">Members</div>
+    <div class="stack">${membersList(true) || '<div class="empty">Loading members…</div>'}</div>
+    <div class="section-label">Invite</div>
+    ${inviteCard()}
+    <button class="full danger-btn" style="margin-top:18px;" onclick="deleteGroup()">Delete group</button>`;
 }
 
-async function removeMember(userId) {
-  if (!confirm('Remove this member from the group?')) return;
-  await api(`/api/groups/${state.currentGroup.id}/members/${userId}`, { method: 'DELETE' });
-  await loadGroupDetail();
-  render();
+function screenOverviewTab() {
+  const detail = state.groupDetail || state.currentGroup;
+  const commish = (state.groupMembers || []).find((m) => m.role === 'commissioner');
+  const poolOn = !!detail.pool_enabled;
+  const myPayment = poolOn && state.pool && state.pool.members ? state.pool.members.find((m) => state.user && m.id === state.user.id) : null;
+  return `
+    <div class="section-label">League overview</div>
+    <div class="card" style="padding:4px 14px;">
+      <div class="kv"><span class="k">League</span><span class="v">${esc(detail.name)}</span></div>
+      <div class="kv"><span class="k">Commissioner</span><span class="v">${commish ? esc(commish.name) : '—'}</span></div>
+      <div class="kv"><span class="k">Members</span><span class="v">${(state.groupMembers || []).length || state.currentGroup.member_count || '—'}</span></div>
+      <div class="kv"><span class="k">Scoring</span><span class="v">1 point per correct pick</span></div>
+      <div class="kv"><span class="k">Weekly pool</span><span class="v">${poolOn ? `$${esc(detail.pool_amount_per_person)} per person` : 'None — bragging rights'}</span></div>
+      ${poolOn ? `<div class="kv"><span class="k">How to pay</span><span class="v">Venmo ${commish ? esc(commish.name.split(' ')[0]) : 'the commissioner'}</span></div>` : ''}
+      ${poolOn ? `<div class="kv"><span class="k">Week ${state.weekNumber} status</span><span class="v">${myPayment ? (myPayment.paid ? '<span class="pill success">Paid</span>' : '<span class="pill">Not marked paid yet</span>') : '…'}</span></div>` : ''}
+    </div>
+    <div class="section-label">Members</div>
+    <div class="stack">${membersList(false) || '<div class="empty">Loading members…</div>'}</div>
+    <div class="section-label">Invite friends</div>
+    ${inviteCard()}
+    <button class="full danger-btn" style="margin-top:18px;" onclick="leaveGroup()">Leave group</button>`;
 }
 
-async function leaveGroup() {
-  if (!confirm('Leave this group?')) return;
-  await api(`/api/groups/${state.currentGroup.id}/leave`, { method: 'POST' });
-  await loadGroups();
-  backToGroups();
+// Someone's picks for the week, short form. Violet = they picked differently from you.
+function screenMemberPicks() {
+  const d = state.memberData;
+  const back = `<button class="backlink" onclick="closeMember()">‹ ${esc(state.currentGroup.name)}</button>`;
+  if (!d) return `${back}${weekSwitcher()}<div class="empty">Loading picks…</div>`;
+
+  const isSelf = d.is_self;
+  const title = isSelf ? 'Your picks' : `${esc(d.member.name)}’s picks`;
+  let diffs = 0;
+  const rows = d.games.map((g) => {
+    const theirs = g.their_pick;
+    const grade = isFinal(g) && g.final_winner && theirs ? (theirs === g.final_winner ? 'right' : 'wrong') : '';
+    const diff = !isSelf && theirs && g.my_pick && theirs !== g.my_pick;
+    if (diff) diffs++;
+    let right;
+    if (g.hidden) right = `<span class="hidden-pick">${g.has_pick ? '🔒 Hidden until kickoff' : 'No pick yet'}</span>`;
+    else if (!theirs) right = '<span class="hidden-pick">No pick</span>';
+    else right = `${teamTag(abbrFor(g, theirs), grade)}${grade ? `<span class="result-dot ${grade}">${grade === 'right' ? '✓ +1' : '✗'}</span>` : ''}`;
+    return `
+      <div class="pick-row ${diff ? 'diff' : ''}">
+        <div class="game">
+          <div class="teams">${esc(abbrFor(g, g.away_team))}<span class="at">@</span>${esc(abbrFor(g, g.home_team))}</div>
+          <div class="tiny muted">${esc(scoreLine(g))}</div>
+        </div>
+        <div class="their">
+          ${right}
+          ${diff ? `<span class="you">You: ${esc(abbrFor(g, g.my_pick))}</span>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    ${back}
+    <div class="header">
+      <h1>${title}</h1>
+      <div class="eyebrow">Week ${state.weekNumber} · <span class="success-text">${d.summary.right} right</span> · <span style="color:var(--danger)">${d.summary.wrong} wrong</span>${!isSelf && diffs ? ` · ${plural(diffs, 'different pick')}` : ''}</div>
+    </div>
+    ${weekSwitcher()}
+    ${isSelf ? '' : `
+      <div class="legend">
+        <span><span class="sw" style="background:var(--diff)"></span>Picked differently from you</span>
+        <span>🔒 Revealed at kickoff</span>
+      </div>`}
+    <div class="stack">${rows || '<div class="empty">No games this week.</div>'}</div>`;
 }
 
-async function deleteGroup() {
-  if (!confirm('Delete this group permanently? This cannot be undone.')) return;
-  await api(`/api/groups/${state.currentGroup.id}`, { method: 'DELETE' });
-  await loadGroups();
-  backToGroups();
+// ---------- screens: community leaderboard ----------
+function screenLeaderboard() {
+  const lb = state.leaderboard;
+  const weekly = state.leaderboardType === 'weekly';
+  let body = '<div class="empty">Loading leaderboard…</div>';
+  if (lb) {
+    const meCard = lb.me
+      ? `<div class="card row between">
+           <div><div class="small muted">${weekly ? `Your week ${state.weekNumber}` : 'Your season'}</div>
+             <div class="display" style="font-size:20px;">#${lb.me.rank} <span class="muted" style="font-size:14px; font-family:Inter,sans-serif; font-weight:400;">of ${lb.total_players}</span></div></div>
+           <div style="text-align:right;"><div class="display" style="font-size:20px;">${lb.me.points} pts</div><div class="tiny muted">${record(lb.me.points, lb.me.wrong)}</div></div>
+         </div>`
+      : `<div class="card small muted">Make picks ${weekly ? 'this week' : 'this season'} to get on the board.</div>`;
+    const rows = lb.leaders.map((r) => `
+      <div class="player-row ${r.is_me ? 'me' : ''}">
+        <span class="rank">${r.rank}</span>
+        <div class="who"><div class="nm">${r.is_me ? 'You' : esc(r.name)}</div><div class="rec">${record(r.points, r.wrong)}</div></div>
+        <span class="pts">${r.points}</span>
+      </div>`).join('');
+    body = `${meCard}<div class="stack">${rows || '<div class="empty">No finished games scored yet.</div>'}</div>
+      ${lb.total_players > lb.leaders.length ? `<div class="empty">Showing the top ${lb.leaders.length} of ${lb.total_players} players</div>` : ''}`;
+  }
+  return `
+    <div class="header"><h1>Leaderboard</h1><div class="eyebrow">Everyone on Tossup</div></div>
+    <div class="tabs sub">
+      <button class="${weekly ? 'active' : ''}" onclick="setLeaderboardType('weekly')">This week</button>
+      <button class="${!weekly ? 'active' : ''}" onclick="setLeaderboardType('season')">Season</button>
+    </div>
+    ${weekly ? weekSwitcher() : ''}
+    ${body}`;
 }
 
 // ---------- render ----------
@@ -875,24 +1213,24 @@ function render() {
     app.innerHTML = screenAuth();
     return;
   }
-  if (!state.currentGroup) {
-    app.innerHTML = screenGroups();
-    return;
-  }
-  if (state.tab === 'picks') app.innerHTML = screenPicks();
-  else if (state.tab === 'standings') app.innerHTML = screenStandings();
-  else if (state.tab === 'settings') app.innerHTML = screenGroupSettings();
-  else app.innerHTML = screenCommissioner();
+  let screen;
+  if (state.view === 'picks') screen = screenPicks();
+  else if (state.view === 'leaderboard') screen = screenLeaderboard();
+  else if (state.member && state.currentGroup) screen = screenMemberPicks();
+  else if (state.currentGroup) screen = screenGroup();
+  else screen = screenGroupsList();
+  app.innerHTML = screen + navbar();
 }
 
 // ---------- init ----------
 (async function init() {
   if (state.token) {
     try {
-      await loadGroups();
+      await Promise.all([loadGroups(), loadCurrentWeek()]);
+      await loadPicks();
     } catch (err) {
-      logout();
-      return;
+      if (err.status === 401) return logout();
+      showToast("Couldn't reach the server — check your connection.", 'danger');
     }
   }
   render();

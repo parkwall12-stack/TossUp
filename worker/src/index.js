@@ -94,6 +94,19 @@ function generateInviteCode() {
   return code;
 }
 
+// Trims and collapses whitespace in user-typed text (names, group names)
+function cleanText(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+// "Parker Wall" -> "Parker W." — what strangers see on the community leaderboard
+function publicName(name) {
+  const parts = cleanText(name).split(' ').filter(Boolean);
+  if (parts.length === 0) return 'Player';
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
+}
+
 async function getMembership(env, uid, groupId) {
   return env.DB.prepare('SELECT role FROM memberships WHERE user_id = ? AND group_id = ?').bind(uid, groupId).first();
 }
@@ -125,8 +138,11 @@ async function handleSignup(request, env) {
     return json({ error: 'Too many accounts created from this connection. Try again later.' }, 429);
   }
 
-  const { name, email, password } = await request.json();
+  const body = await request.json();
+  const name = cleanText(body.name);
+  const { email, password } = body;
   if (!name || !email || !password) return json({ error: 'Name, email, and password are required' }, 400);
+  if (name.length > 40) return json({ error: 'Name must be 40 characters or fewer' }, 400);
   if (password.length < 8) return json({ error: 'Password must be at least 8 characters' }, 400);
 
   const existing = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email.toLowerCase()).first();
@@ -177,7 +193,12 @@ async function handleGetMe(request, env) {
 async function handleUpdateMe(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
-  const { name, venmo_handle, pick_mode } = await request.json();
+  const body = await request.json();
+  const name = body.name === undefined ? undefined : cleanText(body.name);
+  const { venmo_handle, pick_mode } = body;
+  if (name !== undefined && (!name || name.length > 40)) {
+    return json({ error: 'Name must be 1–40 characters' }, 400);
+  }
   if (pick_mode && !['global', 'per_group'].includes(pick_mode)) {
     return json({ error: 'pick_mode must be "global" or "per_group"' }, 400);
   }
@@ -192,8 +213,11 @@ async function handleUpdateMe(request, env) {
 async function handleCreateGroup(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
-  const { name, pool_enabled, pool_amount_per_person } = await request.json();
+  const body = await request.json();
+  const name = cleanText(body.name);
+  const { pool_enabled, pool_amount_per_person } = body;
   if (!name) return json({ error: 'Group name is required' }, 400);
+  if (name.length > 40) return json({ error: 'Group name must be 40 characters or fewer' }, 400);
 
   let inviteCode, exists;
   do {
@@ -234,9 +258,11 @@ async function handleListGroups(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
   const { results } = await env.DB.prepare(
-    `SELECT g.id, g.name, g.invite_code, g.pool_enabled, g.pool_amount_per_person, m.role
+    `SELECT g.id, g.name, g.invite_code, g.pool_enabled, g.pool_amount_per_person, m.role,
+            (SELECT COUNT(*) FROM memberships m2 WHERE m2.group_id = g.id) AS member_count
      FROM groups g JOIN memberships m ON m.group_id = g.id
-     WHERE m.user_id = ?`
+     WHERE m.user_id = ?
+     ORDER BY g.name`
   ).bind(uid).all();
   return json({ groups: results });
 }
@@ -261,7 +287,16 @@ async function handleUpdateGroup(request, env, groupId) {
   if (!membership || membership.role !== 'commissioner') {
     return json({ error: 'Only the commissioner can edit this group' }, 403);
   }
-  const { name, pool_enabled, pool_amount_per_person } = await request.json();
+  const body = await request.json();
+  const name = body.name === undefined ? undefined : cleanText(body.name);
+  const { pool_enabled, pool_amount_per_person } = body;
+  if (name !== undefined && (!name || name.length > 40)) {
+    return json({ error: 'Group name must be 1–40 characters' }, 400);
+  }
+  if (pool_amount_per_person !== undefined && pool_amount_per_person !== null
+      && !(Number(pool_amount_per_person) > 0 && Number(pool_amount_per_person) <= 1000)) {
+    return json({ error: 'Pool amount must be between $0 and $1,000' }, 400);
+  }
   await env.DB.prepare(
     `UPDATE groups SET
        name = COALESCE(?, name),
@@ -325,76 +360,164 @@ async function handleGetGames(request, env, seasonYear, weekNumber) {
 
 // ---------- picks ----------
 
+async function findWeek(env, seasonYear, weekNumber) {
+  return env.DB.prepare('SELECT id FROM weeks WHERE season_year = ? AND week_number = ?')
+    .bind(seasonYear, weekNumber).first();
+}
+
+async function weekGames(env, weekId) {
+  const { results } = await env.DB.prepare('SELECT * FROM games WHERE week_id = ? ORDER BY kickoff_time, id')
+    .bind(weekId).all();
+  return results;
+}
+
+// A player's picks for one week, keyed by game id. Picks are universal: one set per player
+// (group_id IS NULL) counts in every group and on the community leaderboard.
+async function picksForWeek(env, userId, weekId) {
+  const { results } = await env.DB.prepare(
+    `SELECT p.game_id, p.picked_team FROM picks p JOIN games g ON g.id = p.game_id
+     WHERE p.user_id = ? AND g.week_id = ? AND p.group_id IS NULL`
+  ).bind(userId, weekId).all();
+  return Object.fromEntries(results.map((p) => [p.game_id, p.picked_team]));
+}
+
+function hasKickedOff(game, now = Date.now()) {
+  return new Date(game.kickoff_time).getTime() <= now;
+}
+
+function isRight(game, pick) {
+  return !!pick && !!game.final_winner && pick === game.final_winner;
+}
+
+function isWrong(game, pick) {
+  return !!pick && !!game.final_winner && pick !== game.final_winner;
+}
+
+// GET /api/picks?season=&week= — your own picks for a week
+async function handleGetMyPicks(request, env) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+  const url = new URL(request.url);
+  const week = await findWeek(env, url.searchParams.get('season'), url.searchParams.get('week'));
+  if (!week) return json({ games: [] });
+
+  const games = await weekGames(env, week.id);
+  const mine = await picksForWeek(env, uid, week.id);
+  const now = Date.now();
+  return json({
+    games: games.map((g) => ({ ...g, picked_team: mine[g.id] || null, locked: hasKickedOff(g, now) })),
+  });
+}
+
+// Kept so older copies of the site keep working; picks are universal now
 async function handleGetPicks(request, env, groupId) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
   const membership = await getMembership(env, uid, groupId);
   if (!membership) return json({ error: 'Not a member of this group' }, 403);
-
-  const url = new URL(request.url);
-  const seasonYear = url.searchParams.get('season');
-  const weekNumber = url.searchParams.get('week');
-  const week = await env.DB.prepare('SELECT id FROM weeks WHERE season_year = ? AND week_number = ?')
-    .bind(seasonYear, weekNumber).first();
-  if (!week) return json({ games: [] });
-
-  const user = await env.DB.prepare('SELECT pick_mode FROM users WHERE id = ?').bind(uid).first();
-  const { results: games } = await env.DB.prepare('SELECT * FROM games WHERE week_id = ? ORDER BY kickoff_time')
-    .bind(week.id).all();
-
-  const groupIdFilter = user.pick_mode === 'per_group' ? groupId : null;
-  const { results: picks } = await env.DB.prepare(
-    `SELECT game_id, picked_team FROM picks
-     WHERE user_id = ? AND game_id IN (SELECT id FROM games WHERE week_id = ?) AND group_id IS ?`
-  ).bind(uid, week.id, groupIdFilter).all();
-
-  const pickMap = Object.fromEntries(picks.map((p) => [p.game_id, p.picked_team]));
-  const now = Date.now();
-  const gamesWithPicks = games.map((g) => ({
-    ...g,
-    picked_team: pickMap[g.id] || null,
-    locked: new Date(g.kickoff_time).getTime() <= now,
-  }));
-
-  return json({ pick_mode: user.pick_mode, games: gamesWithPicks });
+  return handleGetMyPicks(request, env);
 }
 
 async function handleSubmitPick(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
-  const { game_id, group_id, picked_team } = await request.json();
+  const { game_id, picked_team } = await request.json();
   if (!game_id || !picked_team) return json({ error: 'game_id and picked_team are required' }, 400);
 
-  const game = await env.DB.prepare('SELECT kickoff_time FROM games WHERE id = ?').bind(game_id).first();
+  const game = await env.DB.prepare('SELECT kickoff_time, home_team, away_team FROM games WHERE id = ?')
+    .bind(game_id).first();
   if (!game) return json({ error: 'Game not found' }, 404);
-  if (new Date(game.kickoff_time).getTime() <= Date.now()) {
+  if (picked_team !== game.home_team && picked_team !== game.away_team) {
+    return json({ error: "That team isn't playing in this game" }, 400);
+  }
+  if (hasKickedOff(game)) {
     return json({ error: 'This game has already kicked off — the pick is locked' }, 409);
   }
 
-  const user = await env.DB.prepare('SELECT pick_mode FROM users WHERE id = ?').bind(uid).first();
-  const effectiveGroupId = user.pick_mode === 'per_group' ? group_id : null;
-
-  if (effectiveGroupId) {
-    const membership = await getMembership(env, uid, effectiveGroupId);
-    if (!membership) return json({ error: 'Not a member of this group' }, 403);
-  }
-
   const existing = await env.DB.prepare(
-    'SELECT id FROM picks WHERE user_id = ? AND game_id = ? AND group_id IS ?'
-  ).bind(uid, game_id, effectiveGroupId).first();
+    'SELECT id FROM picks WHERE user_id = ? AND game_id = ? AND group_id IS NULL'
+  ).bind(uid, game_id).first();
 
   if (existing) {
-    await env.DB.prepare('UPDATE picks SET picked_team = ?, updated_at = datetime("now") WHERE id = ?')
+    await env.DB.prepare("UPDATE picks SET picked_team = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(picked_team, existing.id).run();
   } else {
-    await env.DB.prepare('INSERT INTO picks (user_id, game_id, group_id, picked_team) VALUES (?, ?, ?, ?)')
-      .bind(uid, game_id, effectiveGroupId, picked_team).run();
+    await env.DB.prepare('INSERT INTO picks (user_id, game_id, group_id, picked_team) VALUES (?, ?, NULL, ?)')
+      .bind(uid, game_id, picked_team).run();
   }
 
   return json({ ok: true });
 }
 
+// GET /api/groups/:id/members/:userId/picks?season=&week=
+// Another group member's picks next to yours. Their pick on a game stays hidden
+// until that game kicks off, so nobody can copy picks before the games.
+async function handleGetMemberPicks(request, env, groupId, targetId) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+  if (!(await getMembership(env, uid, groupId))) return json({ error: 'Not a member of this group' }, 403);
+  if (!(await getMembership(env, targetId, groupId))) return json({ error: "That player isn't in this group" }, 404);
+
+  const member = await env.DB.prepare('SELECT id, name FROM users WHERE id = ?').bind(targetId).first();
+  const url = new URL(request.url);
+  const week = await findWeek(env, url.searchParams.get('season'), url.searchParams.get('week'));
+  if (!week) return json({ member, games: [], summary: { right: 0, wrong: 0 } });
+
+  const isSelf = String(targetId) === String(uid);
+  const games = await weekGames(env, week.id);
+  const theirs = await picksForWeek(env, targetId, week.id);
+  const mine = isSelf ? theirs : await picksForWeek(env, uid, week.id);
+  const now = Date.now();
+
+  let right = 0;
+  let wrong = 0;
+  const rows = games.map((g) => {
+    const started = hasKickedOff(g, now);
+    const reveal = isSelf || started;
+    const theirPick = theirs[g.id] || null;
+    if (reveal && isRight(g, theirPick)) right++;
+    if (reveal && isWrong(g, theirPick)) wrong++;
+    return {
+      ...g,
+      locked: started,
+      their_pick: reveal ? theirPick : null,
+      hidden: !reveal,
+      has_pick: !!theirPick,
+      my_pick: mine[g.id] || null,
+    };
+  });
+
+  return json({ member, is_self: isSelf, games: rows, summary: { right, wrong } });
+}
+
 // ---------- standings ----------
+
+// Right/wrong counts per player for a week (or the whole season), from universal picks
+const SCORE_SUBQUERY = `
+  SELECT p.user_id,
+         SUM(CASE WHEN g.final_winner IS NOT NULL AND p.picked_team = g.final_winner THEN 1 ELSE 0 END) AS points,
+         SUM(CASE WHEN g.final_winner IS NOT NULL AND p.picked_team <> g.final_winner THEN 1 ELSE 0 END) AS wrong
+  FROM picks p
+  JOIN games g ON g.id = p.game_id
+  JOIN weeks w ON w.id = g.week_id
+  WHERE p.group_id IS NULL AND w.season_year = ?1 AND (?2 = 1 OR w.week_number = ?3)
+  GROUP BY p.user_id`;
+
+function scoreParams(url) {
+  const type = url.searchParams.get('type') === 'season' ? 'season' : 'weekly';
+  const seasonYear = Number(url.searchParams.get('season')) || currentNflSeason();
+  const weekNumber = Number(url.searchParams.get('week')) || 0;
+  return { type, seasonYear, isSeason: type === 'season' ? 1 : 0, weekNumber };
+}
+
+// Standard competition ranking: 1, 2, 2, 4 — players tied on points share a rank
+function withRanks(rows) {
+  let rank = 0;
+  return rows.map((r, i) => {
+    if (i === 0 || r.points !== rows[i - 1].points) rank = i + 1;
+    return { ...r, rank };
+  });
+}
 
 async function handleStandings(request, env, groupId) {
   const uid = await getAuthedUserId(request, env);
@@ -402,28 +525,42 @@ async function handleStandings(request, env, groupId) {
   const membership = await getMembership(env, uid, groupId);
   if (!membership) return json({ error: 'Not a member of this group' }, 403);
 
-  const url = new URL(request.url);
-  const type = url.searchParams.get('type') === 'season' ? 'season' : 'weekly';
-  const seasonYear = url.searchParams.get('season');
-  const weekNumber = url.searchParams.get('week') || 0;
-  const isSeasonMode = type === 'season' ? 1 : 0;
-
+  const { type, seasonYear, isSeason, weekNumber } = scoreParams(new URL(request.url));
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.name,
-        SUM(CASE WHEN g.final_winner IS NOT NULL AND p.picked_team = g.final_winner THEN 1 ELSE 0 END) AS points,
-        SUM(CASE WHEN g.final_winner IS NOT NULL THEN 1 ELSE 0 END) AS games_final
+    `SELECT u.id, u.name, m.role, COALESCE(s.points, 0) AS points, COALESCE(s.wrong, 0) AS wrong
      FROM memberships m
      JOIN users u ON u.id = m.user_id
-     JOIN weeks w ON w.season_year = ?
-     JOIN games g ON g.week_id = w.id AND (? = 1 OR w.week_number = ?)
-     LEFT JOIN picks p ON p.user_id = u.id AND p.game_id = g.id
-        AND p.group_id IS (CASE WHEN u.pick_mode = 'per_group' THEN ? ELSE NULL END)
-     WHERE m.group_id = ?
-     GROUP BY u.id, u.name
-     ORDER BY points DESC`
-  ).bind(seasonYear, isSeasonMode, weekNumber, groupId, groupId).all();
+     LEFT JOIN (${SCORE_SUBQUERY}) AS s ON s.user_id = u.id
+     WHERE m.group_id = ?4
+     ORDER BY points DESC, wrong ASC, u.name`
+  ).bind(seasonYear, isSeason, weekNumber, groupId).all();
 
-  return json({ type, standings: results });
+  return json({ type, standings: withRanks(results) });
+}
+
+// GET /api/leaderboard?type=weekly|season&season=&week= — everyone on Tossup.
+// Strangers only ever get a short public name ("Parker W."), never the full name.
+async function handleLeaderboard(request, env) {
+  const uid = await getAuthedUserId(request, env);
+  if (!uid) return json({ error: 'Not authenticated' }, 401);
+
+  const { type, seasonYear, isSeason, weekNumber } = scoreParams(new URL(request.url));
+  const { results } = await env.DB.prepare(
+    `SELECT u.id, u.name, s.points, s.wrong
+     FROM (${SCORE_SUBQUERY}) AS s
+     JOIN users u ON u.id = s.user_id
+     ORDER BY s.points DESC, s.wrong ASC, u.id`
+  ).bind(seasonYear, isSeason, weekNumber).all();
+
+  const ranked = withRanks(results).map((r) => ({
+    rank: r.rank,
+    name: publicName(r.name),
+    points: r.points,
+    wrong: r.wrong,
+    is_me: r.id === uid,
+  }));
+  const me = ranked.find((r) => r.is_me) || null;
+  return json({ type, total_players: ranked.length, me, leaders: ranked.slice(0, 100) });
 }
 
 // ---------- pool ----------
@@ -487,7 +624,7 @@ async function handleMarkPaid(request, env, groupId, userId) {
   if (!week) return json({ error: 'Week not found' }, 404);
 
   await env.DB.prepare(
-    'UPDATE pool_payments SET paid = 1, confirmed_at = datetime("now") WHERE group_id = ? AND week_id = ? AND user_id = ?'
+    `UPDATE pool_payments SET paid = 1, confirmed_at = datetime('now') WHERE group_id = ? AND week_id = ? AND user_id = ?`
   ).bind(groupId, week.id, userId).run();
 
   return json({ ok: true });
@@ -753,7 +890,6 @@ async function handleCurrentWeek(request, env) {
 // ---------- router ----------
 
 async function route(request, env) {
-    try {
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method;
@@ -781,6 +917,13 @@ async function route(request, env) {
       const picksMatch = path.match(/^\/api\/groups\/(\d+)\/picks$/);
       if (picksMatch && method === 'GET') return handleGetPicks(request, env, picksMatch[1]);
       if (path === '/api/picks' && method === 'POST') return handleSubmitPick(request, env);
+      if (path === '/api/picks' && method === 'GET') return handleGetMyPicks(request, env);
+      if (path === '/api/leaderboard' && method === 'GET') return handleLeaderboard(request, env);
+
+      const memberPicksMatch = path.match(/^\/api\/groups\/(\d+)\/members\/(\d+)\/picks$/);
+      if (memberPicksMatch && method === 'GET') {
+        return handleGetMemberPicks(request, env, memberPicksMatch[1], memberPicksMatch[2]);
+      }
 
       const standingsMatch = path.match(/^\/api\/groups\/(\d+)\/standings$/);
       if (standingsMatch && method === 'GET') return handleStandings(request, env, standingsMatch[1]);
@@ -800,9 +943,6 @@ async function route(request, env) {
       if (path === '/api/current-week' && method === 'GET') return handleCurrentWeek(request, env);
 
       return json({ error: 'Not found' }, 404);
-    } catch (err) {
-      return json({ error: 'Server error', detail: String(err) }, 500);
-    }
 }
 
 export default {
@@ -814,7 +954,14 @@ export default {
       return new Response(null, { headers: { ...CORS_HEADERS, 'Access-Control-Allow-Origin': allowOrigin } });
     }
 
-    const response = await route(request, env);
+    let response;
+    try {
+      // Awaited here so any handler error is caught (a returned-but-not-awaited promise would escape)
+      response = await route(request, env);
+    } catch (err) {
+      console.error('Unhandled error:', request.method, new URL(request.url).pathname, err);
+      response = json({ error: 'Something went wrong on our end. Try again in a moment.' }, 500);
+    }
     response.headers.set('Access-Control-Allow-Origin', allowOrigin);
     return response;
   },
