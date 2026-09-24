@@ -41,15 +41,18 @@ CREATE TABLE weeks (
 CREATE TABLE games (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   week_id INTEGER NOT NULL REFERENCES weeks(id),
-  espn_event_id TEXT,
+  source_game_id TEXT, -- the data provider's game ID, e.g. "apisports:17377"
   home_team TEXT NOT NULL,
   home_team_abbr TEXT,
   away_team TEXT NOT NULL,
   away_team_abbr TEXT,
   kickoff_time TEXT NOT NULL, -- ISO 8601 UTC
-  final_winner TEXT -- NULL until the game ends
+  status TEXT NOT NULL DEFAULT 'NS', -- NS, Q1-Q4, HT, OT, FT, AOT, CANC, PST
+  home_score INTEGER,
+  away_score INTEGER,
+  final_winner TEXT -- NULL until the game ends (and stays NULL for a tie)
 );
-CREATE UNIQUE INDEX idx_games_espn_event ON games(espn_event_id) WHERE espn_event_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_games_source_game ON games(source_game_id) WHERE source_game_id IS NOT NULL;
 
 -- group_id NULL = a global pick (applies to every group the user is in)
 -- group_id set  = a pick scoped to just that one group (per-group mode)

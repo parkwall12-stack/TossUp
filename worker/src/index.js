@@ -493,101 +493,261 @@ async function handleMarkPaid(request, env, groupId, userId) {
   return json({ ok: true });
 }
 
-// ---------- ESPN sync ----------
+// ---------- NFL game sync (nflverse) ----------
+// Schedule and final scores come from nflverse's public games.csv — free, no API key,
+// updated every few minutes during the season. The whole season is written in two queries.
 
-const ESPN_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+const NFLVERSE_GAMES_URLS = [
+  'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv',
+  'https://cdn.jsdelivr.net/gh/nflverse/nfldata@master/data/games.csv', // backup mirror
+];
 
-async function fetchEspnScoreboard(year, week) {
-  let url = ESPN_SCOREBOARD_URL;
-  const params = [];
-  if (year) params.push(`year=${year}`);
-  if (week) params.push(`week=${week}&seasontype=2`); // seasontype=2 is the regular season
-  if (params.length) url += '?' + params.join('&');
+// nflverse uses team codes; picks and scoring use full names.
+const NFL_TEAMS = {
+  ARI: ['Arizona Cardinals', 'ARI'], ATL: ['Atlanta Falcons', 'ATL'], BAL: ['Baltimore Ravens', 'BAL'],
+  BUF: ['Buffalo Bills', 'BUF'], CAR: ['Carolina Panthers', 'CAR'], CHI: ['Chicago Bears', 'CHI'],
+  CIN: ['Cincinnati Bengals', 'CIN'], CLE: ['Cleveland Browns', 'CLE'], DAL: ['Dallas Cowboys', 'DAL'],
+  DEN: ['Denver Broncos', 'DEN'], DET: ['Detroit Lions', 'DET'], GB: ['Green Bay Packers', 'GB'],
+  HOU: ['Houston Texans', 'HOU'], IND: ['Indianapolis Colts', 'IND'], JAX: ['Jacksonville Jaguars', 'JAX'],
+  KC: ['Kansas City Chiefs', 'KC'], LA: ['Los Angeles Rams', 'LAR'], LAC: ['Los Angeles Chargers', 'LAC'],
+  LV: ['Las Vegas Raiders', 'LV'], MIA: ['Miami Dolphins', 'MIA'], MIN: ['Minnesota Vikings', 'MIN'],
+  NE: ['New England Patriots', 'NE'], NO: ['New Orleans Saints', 'NO'], NYG: ['New York Giants', 'NYG'],
+  NYJ: ['New York Jets', 'NYJ'], PHI: ['Philadelphia Eagles', 'PHI'], PIT: ['Pittsburgh Steelers', 'PIT'],
+  SEA: ['Seattle Seahawks', 'SEA'], SF: ['San Francisco 49ers', 'SF'], TB: ['Tampa Bay Buccaneers', 'TB'],
+  TEN: ['Tennessee Titans', 'TEN'], WAS: ['Washington Commanders', 'WAS'],
+};
 
-  const res = await fetch(url, { headers: { 'User-Agent': 'TossupApp/1.0' } });
-  if (!res.ok) throw new Error(`ESPN API returned ${res.status}`);
-  return res.json();
+function teamInfo(code) {
+  const team = NFL_TEAMS[code];
+  return team ? { name: team[0], abbr: team[1] } : { name: code, abbr: code };
 }
 
-async function getOrCreateWeek(env, seasonYear, weekNumber) {
-  let week = await env.DB.prepare('SELECT id FROM weeks WHERE season_year = ? AND week_number = ?')
-    .bind(seasonYear, weekNumber).first();
-  if (!week) {
-    const result = await env.DB.prepare('INSERT INTO weeks (season_year, week_number) VALUES (?, ?)')
-      .bind(seasonYear, weekNumber).run();
-    week = { id: result.meta.last_row_id };
+// An NFL season is named for the year it starts: Jan/Feb 2027 games belong to the 2026 season.
+function currentNflSeason(now = new Date()) {
+  const year = now.getUTCFullYear();
+  return now.getUTCMonth() < 2 ? year - 1 : year;
+}
+
+// Day of the month of the nth Sunday (monthIndex is 0-based)
+function nthSunday(year, monthIndex, n) {
+  const firstDay = new Date(Date.UTC(year, monthIndex, 1)).getUTCDay();
+  return 1 + ((7 - firstDay) % 7) + (n - 1) * 7;
+}
+
+// US Eastern daylight time runs from the 2nd Sunday of March to the 1st Sunday of November
+function isEasternDaylightTime(year, month, day) {
+  if (month < 3 || month > 11) return false;
+  if (month > 3 && month < 11) return true;
+  if (month === 3) return day >= nthSunday(year, 2, 2);
+  return day < nthSunday(year, 10, 1);
+}
+
+// nflverse lists every kickoff (international games too) in US Eastern time
+function easternToUtcIso(dateStr, timeStr) {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, minute] = (timeStr || '13:00').split(':').map(Number);
+  const offsetHours = isEasternDaylightTime(year, month, day) ? 4 : 5;
+  return new Date(Date.UTC(year, month - 1, day, hour + offsetHours, minute)).toISOString();
+}
+
+// Splits one CSV line, handling quoted fields like "Stadium, City"
+function parseCsvLine(line) {
+  const fields = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') inQuotes = false;
+      else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ',') { fields.push(field); field = ''; }
+    else field += ch;
   }
-  return week.id;
+  fields.push(field);
+  return fields;
 }
 
-async function upsertGame(env, weekId, espnEventId, home, away, kickoffTime, finalWinner) {
-  const existing = await env.DB.prepare('SELECT id FROM games WHERE espn_event_id = ?').bind(espnEventId).first();
-  if (existing) {
-    await env.DB.prepare(
-      `UPDATE games SET home_team = ?, home_team_abbr = ?, away_team = ?, away_team_abbr = ?, kickoff_time = ?, final_winner = ?
-       WHERE id = ?`
-    ).bind(home.name, home.abbr, away.name, away.abbr, kickoffTime, finalWinner, existing.id).run();
-  } else {
-    await env.DB.prepare(
-      `INSERT INTO games (week_id, espn_event_id, home_team, home_team_abbr, away_team, away_team_abbr, kickoff_time, final_winner)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(weekId, espnEventId, home.name, home.abbr, away.name, away.abbr, kickoffTime, finalWinner).run();
-  }
-}
-
-// Pulls one week's games from ESPN and writes them in. With no args, ESPN returns
-// whatever it considers the "current" week — that's what the cron trigger relies on.
-async function syncNflGames(env, year, week) {
-  const data = await fetchEspnScoreboard(year, week);
-  const seasonYear = data.season?.year || year;
-  const weekNumber = data.week?.number || week;
-  if (!seasonYear || !weekNumber) throw new Error('Could not determine season/week from ESPN response');
-
-  const weekId = await getOrCreateWeek(env, seasonYear, weekNumber);
-  let synced = 0;
-
-  for (const event of data.events || []) {
-    const competition = event.competitions?.[0];
-    if (!competition) continue;
-
-    const homeC = competition.competitors?.find((c) => c.homeAway === 'home');
-    const awayC = competition.competitors?.find((c) => c.homeAway === 'away');
-    if (!homeC || !awayC) continue;
-
-    const home = { name: homeC.team.displayName, abbr: homeC.team.abbreviation };
-    const away = { name: awayC.team.displayName, abbr: awayC.team.abbreviation };
-
-    const completed = competition.status?.type?.completed === true;
-    let finalWinner = null;
-    if (completed) {
-      const homeScore = Number(homeC.score);
-      const awayScore = Number(awayC.score);
-      if (homeScore > awayScore) finalWinner = home.name;
-      else if (awayScore > homeScore) finalWinner = away.name;
-      // a tie leaves final_winner null — nobody's pick scores that game
+async function fetchGamesCsv() {
+  let lastError;
+  for (const url of NFLVERSE_GAMES_URLS) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Tossup (tossup.me)' } });
+      if (res.ok) return await res.text();
+      lastError = new Error(`${new URL(url).hostname} returned HTTP ${res.status}`);
+    } catch (err) {
+      lastError = err;
     }
+  }
+  throw lastError;
+}
 
-    await upsertGame(env, weekId, event.id, home, away, event.date, finalWinner);
-    synced++;
+// Returns this season's regular-season games from games.csv as plain objects.
+// Only the season's own rows are parsed (they sit at the end of a ~2 MB file).
+function extractSeasonRows(text, season) {
+  const headerEnd = text.indexOf('\n');
+  const header = parseCsvLine(text.slice(0, headerEnd).replace(/\r$/, ''));
+  const col = Object.fromEntries(header.map((name, i) => [name, i]));
+  for (const needed of ['game_id', 'season', 'game_type', 'week', 'gameday', 'gametime', 'away_team', 'away_score', 'home_team', 'home_score', 'overtime']) {
+    if (!(needed in col)) throw new Error(`games.csv is missing the "${needed}" column`);
   }
 
-  return { seasonYear, weekNumber, synced };
+  const sectionStart = text.indexOf(`\n${season}_`);
+  if (sectionStart === -1) return [];
+
+  const rows = [];
+  for (const rawLine of text.slice(sectionStart + 1).split('\n')) {
+    const line = rawLine.replace(/\r$/, '');
+    if (!line) continue;
+    const f = parseCsvLine(line);
+    if (f[col.season] !== String(season) || f[col.game_type] !== 'REG') continue;
+    rows.push({
+      gameId: f[col.game_id],
+      week: Number(f[col.week]),
+      gameday: f[col.gameday],
+      gametime: f[col.gametime],
+      away: f[col.away_team],
+      home: f[col.home_team],
+      awayScore: f[col.away_score],
+      homeScore: f[col.home_score],
+      overtime: f[col.overtime],
+    });
+  }
+  return rows;
+}
+
+// Turns one games.csv row into the flat shape our games table stores
+function toGameRow(r, season) {
+  if (!r.week || !r.gameday || !r.home || !r.away) return null;
+  const home = teamInfo(r.home);
+  const away = teamInfo(r.away);
+  const played = r.homeScore !== '' && r.awayScore !== '';
+  const homeScore = played ? Number(r.homeScore) : null;
+  const awayScore = played ? Number(r.awayScore) : null;
+
+  let finalWinner = null;
+  if (played) {
+    if (homeScore > awayScore) finalWinner = home.name;
+    else if (awayScore > homeScore) finalWinner = away.name;
+    // a tie leaves final_winner null — nobody's pick scores that game
+  }
+
+  return {
+    id: `nflverse:${r.gameId}`,
+    season: Number(season),
+    week: r.week,
+    home: home.name,
+    home_abbr: home.abbr,
+    away: away.name,
+    away_abbr: away.abbr,
+    kickoff: easternToUtcIso(r.gameday, r.gametime),
+    status: played ? (r.overtime === '1' ? 'AOT' : 'FT') : 'NS',
+    home_score: homeScore,
+    away_score: awayScore,
+    winner: finalWinner,
+  };
+}
+
+async function syncNflGames(env, season) {
+  const seasonYear = Number(season) || currentNflSeason();
+  const text = await fetchGamesCsv();
+  const rows = extractSeasonRows(text, seasonYear).map((r) => toGameRow(r, seasonYear)).filter(Boolean);
+  if (rows.length === 0) return { seasonYear, synced: 0 };
+
+  // Everything is passed as one JSON parameter and unpacked by SQLite's json_each,
+  // so the whole season is written in two queries instead of one per game.
+  const payload = JSON.stringify(rows);
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO weeks (season_year, week_number)
+     SELECT DISTINCT json_extract(value, '$.season'), json_extract(value, '$.week') FROM json_each(?1)`
+  ).bind(payload).run();
+
+  // The DO UPDATE ... WHERE clause skips rows that haven't changed, so a sync
+  // where nothing happened writes nothing.
+  const result = await env.DB.prepare(
+    `INSERT INTO games (week_id, source_game_id, home_team, home_team_abbr, away_team, away_team_abbr,
+                        kickoff_time, status, home_score, away_score, final_winner)
+     SELECT w.id,
+            json_extract(j.value, '$.id'),
+            json_extract(j.value, '$.home'),
+            json_extract(j.value, '$.home_abbr'),
+            json_extract(j.value, '$.away'),
+            json_extract(j.value, '$.away_abbr'),
+            json_extract(j.value, '$.kickoff'),
+            json_extract(j.value, '$.status'),
+            json_extract(j.value, '$.home_score'),
+            json_extract(j.value, '$.away_score'),
+            json_extract(j.value, '$.winner')
+     FROM json_each(?1) AS j
+     JOIN weeks AS w
+       ON w.season_year = json_extract(j.value, '$.season')
+      AND w.week_number = json_extract(j.value, '$.week')
+     WHERE true
+     ON CONFLICT (source_game_id) WHERE source_game_id IS NOT NULL DO UPDATE SET
+       week_id = excluded.week_id,
+       home_team = excluded.home_team,
+       home_team_abbr = excluded.home_team_abbr,
+       away_team = excluded.away_team,
+       away_team_abbr = excluded.away_team_abbr,
+       kickoff_time = excluded.kickoff_time,
+       status = excluded.status,
+       home_score = excluded.home_score,
+       away_score = excluded.away_score,
+       final_winner = excluded.final_winner
+     WHERE games.week_id IS NOT excluded.week_id
+        OR games.kickoff_time IS NOT excluded.kickoff_time
+        OR games.status IS NOT excluded.status
+        OR games.home_score IS NOT excluded.home_score
+        OR games.away_score IS NOT excluded.away_score
+        OR games.final_winner IS NOT excluded.final_winner
+        OR games.home_team IS NOT excluded.home_team
+        OR games.away_team IS NOT excluded.away_team`
+  ).bind(payload).run();
+
+  return { seasonYear, synced: rows.length, changed: result.meta?.changes ?? null };
 }
 
 async function handleSyncNfl(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
 
+  // Cap manual syncs app-wide so nobody can hammer the data source (the cron keeps data fresh anyway)
+  if (await tooManyRecentEvents(env, 'manual-sync', 5, 10)) {
+    return json({ error: 'Sync was run recently. Try again in a few minutes.' }, 429);
+  }
+  await recordEvent(env, 'manual-sync');
+
   const url = new URL(request.url);
-  const year = url.searchParams.get('year');
-  const week = url.searchParams.get('week');
+  const season = url.searchParams.get('season') || url.searchParams.get('year');
 
   try {
-    const result = await syncNflGames(env, year, week);
+    const result = await syncNflGames(env, season);
     return json({ ok: true, ...result });
   } catch (err) {
     return json({ error: 'Sync failed', detail: String(err) }, 500);
   }
+}
+
+// The week people should be looking at: the week of the next game that isn't over.
+// Once a week's last game finishes, this rolls forward to the next week.
+async function handleCurrentWeek(request, env) {
+  const season = currentNflSeason();
+  const next = await env.DB.prepare(
+    `SELECT w.season_year, w.week_number FROM games g JOIN weeks w ON w.id = g.week_id
+     WHERE w.season_year = ? AND g.status NOT IN ('FT', 'AOT', 'CANC')
+     ORDER BY g.kickoff_time LIMIT 1`
+  ).bind(season).first();
+  if (next) return json({ season: next.season_year, week: next.week_number });
+
+  const last = await env.DB.prepare(
+    `SELECT w.season_year, w.week_number FROM games g JOIN weeks w ON w.id = g.week_id
+     WHERE w.season_year = ? ORDER BY w.week_number DESC LIMIT 1`
+  ).bind(season).first();
+  if (last) return json({ season: last.season_year, week: last.week_number });
+
+  return json({ season, week: 1 });
 }
 
 // ---------- router ----------
@@ -637,6 +797,7 @@ async function route(request, env) {
       if (gamesMatch && method === 'GET') return handleGetGames(request, env, gamesMatch[1], gamesMatch[2]);
 
       if (path === '/api/sync/nfl' && method === 'POST') return handleSyncNfl(request, env);
+      if (path === '/api/current-week' && method === 'GET') return handleCurrentWeek(request, env);
 
       return json({ error: 'Not found' }, 404);
     } catch (err) {
@@ -658,7 +819,7 @@ export default {
     return response;
   },
 
-  // Runs on the schedule set in wrangler.toml — keeps the current week's games and scores fresh
+  // Runs on the schedule set in wrangler.toml — keeps this season's games and scores fresh
   async scheduled(event, env, ctx) {
     ctx.waitUntil(syncNflGames(env));
   },

@@ -147,6 +147,7 @@ const state = {
   tab: 'picks', // picks | standings | commissioner
   seasonYear: 2026,
   weekNumber: 1,
+  currentWeekLoaded: false,
   games: [],
   pickMode: 'global',
   standingsType: 'weekly',
@@ -190,10 +191,23 @@ async function loadGroups() {
   state.groups = data.groups;
 }
 
+async function loadCurrentWeek() {
+  if (state.currentWeekLoaded) return;
+  try {
+    const data = await api('/api/current-week');
+    state.seasonYear = data.season;
+    state.weekNumber = data.week;
+    state.currentWeekLoaded = true;
+  } catch (err) {
+    // Falls back to whatever week is already selected
+  }
+}
+
 async function loadGroupScreen(group) {
   state.currentGroup = group;
   state.role = group.role;
   state.tab = 'picks';
+  await loadCurrentWeek();
   await loadPicks();
   render();
 }
@@ -296,7 +310,7 @@ async function copyInviteCode() {
 }
 
 function changeWeek(delta) {
-  state.weekNumber = Math.max(1, state.weekNumber + delta);
+  state.weekNumber = Math.min(18, Math.max(1, state.weekNumber + delta));
   if (state.tab === 'picks') loadPicks().then(render);
   else if (state.tab === 'standings') loadStandings().then(render);
   else if (state.tab === 'commissioner') loadPool().then(render);
@@ -430,9 +444,30 @@ function screenPicks() {
     const homeSel = g.picked_team === g.home_team;
     const awaySel = g.picked_team === g.away_team;
     const time = new Date(g.kickoff_time).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    const finished = g.status === 'FT' || g.status === 'AOT';
+    const live = ['Q1', 'Q2', 'Q3', 'Q4', 'HT', 'OT'].includes(g.status);
+    let statusLine = `${time}${locked ? ' · locked' : ''}`;
+    if (finished) {
+      statusLine = `Final${g.status === 'AOT' ? ' (OT)' : ''} · ${g.away_team_abbr || g.away_team} ${g.away_score} – ${g.home_team_abbr || g.home_team} ${g.home_score}`;
+    } else if (live) {
+      statusLine = `Live · ${g.away_team_abbr || g.away_team} ${g.away_score ?? 0} – ${g.home_team_abbr || g.home_team} ${g.home_score ?? 0}`;
+    } else if (g.status === 'CANC') {
+      statusLine = 'Cancelled · no points';
+    } else if (g.status === 'PST') {
+      statusLine = `Postponed · ${time}`;
+    }
+    let result = '';
+    if (finished && g.picked_team) {
+      if (!g.final_winner) result = '<span class="pill">Tie</span>';
+      else if (g.picked_team === g.final_winner) result = '<span class="pill success">✓ +1</span>';
+      else result = '<span class="pill danger">✗</span>';
+    }
     return `
       <div class="card">
-        <div class="tiny muted" style="margin-bottom:8px;">${time}${locked ? ' · locked' : ''}</div>
+        <div class="row between" style="margin-bottom:8px;">
+          <span class="tiny muted">${statusLine}</span>
+          ${result}
+        </div>
         <div class="row">
           <button class="pick-btn ${awaySel ? 'selected' : ''}" ${locked ? 'disabled' : ''} onclick="makePick(${g.id}, '${g.away_team}')">
             <span class="badge">${g.away_team_abbr || g.away_team.slice(0,3).toUpperCase()}</span>${g.away_team}
