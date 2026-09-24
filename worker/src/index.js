@@ -194,21 +194,71 @@ async function handleUpdateMe(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
   const body = await request.json();
-  const name = body.name === undefined ? undefined : cleanText(body.name);
-  const { venmo_handle, pick_mode } = body;
-  if (name !== undefined && (!name || name.length > 40)) {
-    return json({ error: 'Name must be 1–40 characters' }, 400);
+  const sets = [];
+  const params = [];
+
+  if (body.name !== undefined) {
+    const name = cleanText(body.name);
+    if (!name || name.length > 40) return json({ error: 'Name must be 1–40 characters' }, 400);
+    sets.push('name = ?');
+    params.push(name);
   }
-  if (pick_mode && !['global', 'per_group'].includes(pick_mode)) {
-    return json({ error: 'pick_mode must be "global" or "per_group"' }, 400);
+  if (body.venmo_handle !== undefined) {
+    const handle = String(body.venmo_handle || '').trim().replace(/^@+/, '');
+    if (handle && !/^[A-Za-z0-9_-]{2,30}$/.test(handle)) {
+      return json({ error: 'Venmo usernames use letters, numbers, - and _ (up to 30)' }, 400);
+    }
+    sets.push('venmo_handle = ?');
+    params.push(handle || null); // empty clears it
   }
-  await env.DB.prepare(
-    'UPDATE users SET name = COALESCE(?, name), venmo_handle = COALESCE(?, venmo_handle), pick_mode = COALESCE(?, pick_mode) WHERE id = ?'
-  ).bind(name ?? null, venmo_handle ?? null, pick_mode ?? null, uid).run();
-  return json({ ok: true });
+
+  if (sets.length) {
+    await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...params, uid).run();
+  }
+  const user = await env.DB.prepare('SELECT id, name, email, venmo_handle FROM users WHERE id = ?').bind(uid).first();
+  return json({ ok: true, user });
 }
 
 // ---------- groups ----------
+
+// Accepts a bare code ("7F3K9Q"), a code with spaces, or a whole invite link
+function normalizeInviteCode(value) {
+  const text = String(value || '').toUpperCase();
+  const fromLink = text.match(/JOIN=([A-Z0-9]+)/);
+  return (fromLink ? fromLink[1] : text).replace(/[^A-Z0-9]/g, '').slice(0, 12);
+}
+
+// GET /api/invite/:code — what an invite link shows before you join. No login needed
+// (the code itself is the secret), rate limited per connection to stop code guessing.
+async function handleInvitePreview(request, env, rawCode) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  if (await tooManyRecentEvents(env, `invite:${ip}`, 30, 10)) {
+    return json({ error: 'Too many requests. Try again in a few minutes.' }, 429);
+  }
+  await recordEvent(env, `invite:${ip}`);
+
+  const group = await env.DB.prepare(
+    `SELECT g.id, g.name, g.pool_enabled, g.pool_amount_per_person, u.name AS commissioner_name,
+            (SELECT COUNT(*) FROM memberships m WHERE m.group_id = g.id) AS member_count
+     FROM groups g JOIN users u ON u.id = g.commissioner_id
+     WHERE g.invite_code = ?`
+  ).bind(normalizeInviteCode(rawCode)).first();
+  if (!group) return json({ error: "This invite link isn't valid anymore. Ask for a new one." }, 404);
+
+  const uid = await getAuthedUserId(request, env);
+  const alreadyMember = uid ? !!(await getMembership(env, uid, group.id)) : false;
+  return json({
+    group: {
+      name: group.name,
+      member_count: group.member_count,
+      commissioner: cleanText(group.commissioner_name).split(' ')[0] || 'The commissioner',
+      pool_enabled: !!group.pool_enabled,
+      pool_amount_per_person: group.pool_amount_per_person,
+    },
+    already_member: alreadyMember,
+    group_id: alreadyMember ? group.id : null,
+  });
+}
 
 async function handleCreateGroup(request, env) {
   const uid = await getAuthedUserId(request, env);
@@ -240,18 +290,26 @@ async function handleCreateGroup(request, env) {
 async function handleJoinGroup(request, env) {
   const uid = await getAuthedUserId(request, env);
   if (!uid) return json({ error: 'Not authenticated' }, 401);
-  const { invite_code } = await request.json();
-  const group = await env.DB.prepare('SELECT id, name FROM groups WHERE invite_code = ?')
-    .bind((invite_code || '').toUpperCase()).first();
-  if (!group) return json({ error: 'Invalid invite code' }, 404);
+  // Only wrong codes count toward the limit, so real joins are never blocked
+  if (await tooManyRecentEvents(env, `join:${uid}`, 20, 10)) {
+    return json({ error: 'Too many wrong codes. Try again in a few minutes.' }, 429);
+  }
 
-  const existing = await env.DB.prepare('SELECT 1 FROM memberships WHERE user_id = ? AND group_id = ?')
-    .bind(uid, group.id).first();
-  if (existing) return json({ error: 'Already a member of this group' }, 409);
+  const { invite_code } = await request.json();
+  const code = normalizeInviteCode(invite_code);
+  if (!code) return json({ error: 'Enter an invite code or link' }, 400);
+
+  const group = await env.DB.prepare('SELECT id, name FROM groups WHERE invite_code = ?').bind(code).first();
+  if (!group) {
+    await recordEvent(env, `join:${uid}`);
+    return json({ error: "That code doesn't match any league. Check it and try again." }, 404);
+  }
+
+  if (await getMembership(env, uid, group.id)) return json({ group, already_member: true });
 
   await env.DB.prepare('INSERT INTO memberships (user_id, group_id, role) VALUES (?, ?, ?)')
     .bind(uid, group.id, 'member').run();
-  return json({ group });
+  return json({ group, already_member: false });
 }
 
 async function handleListGroups(request, env) {
@@ -277,7 +335,8 @@ async function handleGetGroup(request, env, groupId) {
     `SELECT u.id, u.name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
      WHERE m.group_id = ? ORDER BY (m.role = 'commissioner') DESC, u.name`
   ).bind(groupId).all();
-  return json({ group, role: membership.role, members });
+  const commish = await env.DB.prepare('SELECT venmo_handle FROM users WHERE id = ?').bind(group.commissioner_id).first();
+  return json({ group, role: membership.role, members, commissioner_venmo: commish ? commish.venmo_handle : null });
 }
 
 async function handleUpdateGroup(request, env, groupId) {
@@ -526,16 +585,34 @@ async function handleStandings(request, env, groupId) {
   if (!membership) return json({ error: 'Not a member of this group' }, 403);
 
   const { type, seasonYear, isSeason, weekNumber } = scoreParams(new URL(request.url));
+  // picks_made counts picks only (never which team), so it's safe to show before kickoff
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.name, m.role, COALESCE(s.points, 0) AS points, COALESCE(s.wrong, 0) AS wrong
+    `SELECT u.id, u.name, m.role, COALESCE(s.points, 0) AS points, COALESCE(s.wrong, 0) AS wrong,
+            COALESCE(pc.picks_made, 0) AS picks_made
      FROM memberships m
      JOIN users u ON u.id = m.user_id
      LEFT JOIN (${SCORE_SUBQUERY}) AS s ON s.user_id = u.id
+     LEFT JOIN (
+       SELECT p.user_id, COUNT(*) AS picks_made
+       FROM picks p JOIN games g ON g.id = p.game_id JOIN weeks w ON w.id = g.week_id
+       WHERE p.group_id IS NULL AND w.season_year = ?1 AND w.week_number = ?3
+       GROUP BY p.user_id
+     ) AS pc ON pc.user_id = u.id
      WHERE m.group_id = ?4
      ORDER BY points DESC, wrong ASC, u.name`
   ).bind(seasonYear, isSeason, weekNumber, groupId).all();
 
-  return json({ type, standings: withRanks(results) });
+  let weekInfo = null;
+  if (!isSeason) {
+    weekInfo = await env.DB.prepare(
+      `SELECT COUNT(*) AS games_total,
+              COALESCE(SUM(CASE WHEN g.status IN ('FT', 'AOT', 'CANC') THEN 1 ELSE 0 END), 0) AS games_done
+       FROM games g JOIN weeks w ON w.id = g.week_id
+       WHERE w.season_year = ? AND w.week_number = ?`
+    ).bind(seasonYear, weekNumber).first();
+  }
+
+  return json({ type, week_info: weekInfo, standings: withRanks(results) });
 }
 
 // GET /api/leaderboard?type=weekly|season&season=&week= — everyone on Tossup.
@@ -586,22 +663,21 @@ async function handlePool(request, env, groupId) {
     week = { id: result.meta.last_row_id };
   }
 
-  const { results: members } = await env.DB.prepare(
-    'SELECT u.id, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.group_id = ?'
-  ).bind(groupId).all();
+  // One row per current member for this week (one query, however big the group is)
+  await env.DB.prepare(
+    `INSERT INTO pool_payments (group_id, week_id, user_id, amount_owed)
+     SELECT ?, ?, user_id, ? FROM memberships WHERE group_id = ?
+     ON CONFLICT (group_id, week_id, user_id) DO NOTHING`
+  ).bind(groupId, week.id, group.pool_amount_per_person, groupId).run();
 
-  for (const member of members) {
-    await env.DB.prepare(
-      `INSERT INTO pool_payments (group_id, week_id, user_id, amount_owed)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT (group_id, week_id, user_id) DO NOTHING`
-    ).bind(groupId, week.id, member.id, group.pool_amount_per_person).run();
-  }
-
+  // Only people still in the group — someone who was removed or left drops off the list
   const { results: payments } = await env.DB.prepare(
     `SELECT u.id, u.name, pp.paid, pp.amount_owed
-     FROM pool_payments pp JOIN users u ON u.id = pp.user_id
-     WHERE pp.group_id = ? AND pp.week_id = ?`
+     FROM pool_payments pp
+     JOIN users u ON u.id = pp.user_id
+     JOIN memberships m ON m.user_id = pp.user_id AND m.group_id = pp.group_id
+     WHERE pp.group_id = ? AND pp.week_id = ?
+     ORDER BY pp.paid, u.name COLLATE NOCASE`
   ).bind(groupId, week.id).all();
 
   const total = payments.reduce((sum, p) => sum + p.amount_owed, 0);
@@ -903,6 +979,9 @@ async function route(request, env) {
       if (path === '/api/groups' && method === 'GET') return handleListGroups(request, env);
       if (path === '/api/groups/join' && method === 'POST') return handleJoinGroup(request, env);
 
+      const inviteMatch = path.match(/^\/api\/invite\/([A-Za-z0-9]{1,12})$/);
+      if (inviteMatch && method === 'GET') return handleInvitePreview(request, env, inviteMatch[1]);
+
       const groupMatch = path.match(/^\/api\/groups\/(\d+)$/);
       if (groupMatch && method === 'GET') return handleGetGroup(request, env, groupMatch[1]);
       if (groupMatch && method === 'PATCH') return handleUpdateGroup(request, env, groupMatch[1]);
@@ -968,6 +1047,9 @@ export default {
 
   // Runs on the schedule set in wrangler.toml — keeps this season's games and scores fresh
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(syncNflGames(env));
+    ctx.waitUntil(Promise.allSettled([
+      syncNflGames(env),
+      env.DB.prepare("DELETE FROM rate_limit_events WHERE created_at < datetime('now', '-1 day')").run(),
+    ]));
   },
 };
