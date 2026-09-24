@@ -89,24 +89,57 @@
   }
   .pill.success { background: rgba(79,166,91,0.15); color: var(--success); }
   .pill.danger { background: rgba(217,97,79,0.15); color: var(--danger); }
-  .badge {
-    width: 24px; height: 24px; border-radius: 50%;
-    background: var(--surface-2); color: var(--text-dim);
-    font-size: 10px; font-weight: 600; font-family: 'Oswald', sans-serif;
-    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  }
   .avatar {
     width: 28px; height: 28px; border-radius: 50%;
     background: rgba(232,163,61,0.18); color: var(--accent);
     font-size: 11px; font-weight: 600; font-family: 'Oswald', sans-serif;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .pick-btn {
-    flex: 1; text-align: left; display: flex; align-items: center; gap: 8px;
-    background: var(--surface-2); border: 1px solid var(--border);
+  /* Team pick buttons: a diagonal panel in the team's main color, then thin stripes
+     in its 2nd and 3rd colors. Colors are set per button via --c1/--c2/--c3/--ink. */
+  .matchup { display: flex; align-items: center; gap: 5px; }
+  .matchup .vs { font-size: 11px; }
+  .team-btn {
+    --c1: #3a4654; --c2: #55616f; --c3: #6b7785; --ink: #f2efe9; --pick-fill: transparent;
+    position: relative; flex: 1; min-width: 0; text-align: left;
+    display: flex; align-items: center;
+    padding: 12px 6px 12px 5px;
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(115deg, var(--c1) 0 41px, var(--c2) 41px 46px, var(--c3) 46px 50px, var(--pick-fill) 50px),
+      var(--surface-2);
   }
-  .pick-btn.selected { background: rgba(232,163,61,0.14); border-color: var(--accent); color: var(--accent); }
-  .pick-btn:disabled { opacity: 0.5; }
+  .team-btn .team-abbr {
+    width: 31px; flex-shrink: 0; text-align: center;
+    font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.4px;
+    color: var(--ink);
+  }
+  .team-btn .team-name {
+    flex: 1; min-width: 0; margin-left: 16px;
+    font-family: 'Oswald', sans-serif; font-weight: 500; font-size: 15px; letter-spacing: 0.1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Picked badge sits on the corner so it never squeezes the team name */
+  .team-btn .team-check {
+    position: absolute; top: -7px; right: -7px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); color: #241a05;
+    font-size: 11px; font-weight: 700; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+  .team-btn.selected {
+    --pick-fill: rgba(232,163,61,0.16);
+    border-color: var(--accent); color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .team-btn:disabled { opacity: 0.72; cursor: default; }
+  .team-btn:disabled:hover { border-color: var(--border); }
+  .team-btn.selected:disabled:hover { border-color: var(--accent); }
+  /* Finished games: the winner keeps full color, the loser fades */
+  .team-btn.winner { opacity: 1; }
+  .team-btn.loser { opacity: 0.38; }
+  .team-btn.selected.loser { opacity: 0.55; }
   .toplink { color: var(--text-dim); font-size: 13px; background: none; border: none; padding: 4px 0; }
   .error { color: var(--danger); font-size: 13px; margin-top: 6px; }
   .success-text { color: var(--success); }
@@ -126,7 +159,7 @@
   .navbar {
     position: fixed; bottom: 0; left: 0; right: 0;
     background: var(--surface); border-top: 1px solid var(--border);
-    display: flex; justify-content: center;
+    display: flex; justify-content: center; z-index: 20;
   }
   .navbar-inner { max-width: 480px; width: 100%; display: flex; }
   .navbtn {
@@ -483,12 +516,63 @@ function backToGroups() {
   render();
 }
 
+// Main, secondary and third team colors (no logos — colors only)
+const TEAM_COLORS = {
+  ARI: ['#97233F', '#000000', '#FFB612'], ATL: ['#A71930', '#000000', '#A5ACAF'],
+  BAL: ['#241773', '#000000', '#9E7C0C'], BUF: ['#00338D', '#C60C30', '#FFFFFF'],
+  CAR: ['#0085CA', '#101820', '#BFC0BF'], CHI: ['#0B162A', '#C83803', '#FFFFFF'],
+  CIN: ['#FB4F14', '#000000', '#FFFFFF'], CLE: ['#311D00', '#FF3C00', '#FFFFFF'],
+  DAL: ['#041E42', '#869397', '#003594'], DEN: ['#FB4F14', '#002244', '#FFFFFF'],
+  DET: ['#0076B6', '#B0B7BC', '#000000'], GB:  ['#203731', '#FFB612', '#FFFFFF'],
+  HOU: ['#03202F', '#A71930', '#FFFFFF'], IND: ['#002C5F', '#A2AAAD', '#FFFFFF'],
+  JAX: ['#006778', '#D7A22A', '#101820'], KC:  ['#E31837', '#FFB81C', '#FFFFFF'],
+  LV:  ['#000000', '#A5ACAF', '#FFFFFF'], LAC: ['#0080C6', '#FFC20E', '#FFFFFF'],
+  LAR: ['#003594', '#FFA300', '#FFD100'], MIA: ['#008E97', '#FC4C02', '#005778'],
+  MIN: ['#4F2683', '#FFC62F', '#FFFFFF'], NE:  ['#002244', '#C60C30', '#B0B7BC'],
+  NO:  ['#D3BC8D', '#101820', '#FFFFFF'], NYG: ['#0B2265', '#A71930', '#A5ACAF'],
+  NYJ: ['#125740', '#FFFFFF', '#000000'], PHI: ['#004C54', '#A5ACAF', '#000000'],
+  PIT: ['#FFB612', '#101820', '#FFFFFF'], SEA: ['#002244', '#69BE28', '#A5ACAF'],
+  SF:  ['#AA0000', '#B3995D', '#FFFFFF'], TB:  ['#D50A0A', '#FF7900', '#34302B'],
+  TEN: ['#0C2340', '#4B92DB', '#C8102E'], WAS: ['#5A1414', '#FFB612', '#FFFFFF'],
+};
+TEAM_COLORS.LA = TEAM_COLORS.LAR;
+
+// White or near-black abbreviation text, whichever reads better on the team's main color
+function inkFor(hex) {
+  const channel = (i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  const lum = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  const onWhite = 1.05 / (lum + 0.05);
+  const onDark = (lum + 0.05) / 0.0587;
+  return onWhite >= onDark ? '#FFFFFF' : '#101820';
+}
+
+function teamButton(g, side, locked) {
+  const name = side === 'home' ? g.home_team : g.away_team;
+  const abbr = (side === 'home' ? g.home_team_abbr : g.away_team_abbr) || name.slice(0, 3).toUpperCase();
+  const nickname = name.split(' ').pop();
+  const selected = g.picked_team === name;
+  const finished = (g.status === 'FT' || g.status === 'AOT') && g.final_winner;
+  const result = finished ? (g.final_winner === name ? 'winner' : 'loser') : '';
+  const colors = TEAM_COLORS[abbr];
+  const style = colors
+    ? `--c1:${colors[0]};--c2:${colors[1]};--c3:${colors[2]};--ink:${inkFor(colors[0])};`
+    : '';
+  return `
+    <button class="team-btn ${selected ? 'selected' : ''} ${result}" style="${style}" ${locked ? 'disabled' : ''}
+      aria-pressed="${selected}" aria-label="Pick ${name}" onclick="makePick(${g.id}, '${name}')">
+      <span class="team-abbr">${abbr}</span>
+      <span class="team-name">${nickname}</span>
+      ${selected ? '<span class="team-check" aria-hidden="true">✓</span>' : ''}
+    </button>`;
+}
+
 function screenPicks() {
   const now = Date.now();
   const rows = state.games.map(g => {
     const locked = g.locked;
-    const homeSel = g.picked_team === g.home_team;
-    const awaySel = g.picked_team === g.away_team;
     const time = new Date(g.kickoff_time).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     const finished = g.status === 'FT' || g.status === 'AOT';
     const live = ['Q1', 'Q2', 'Q3', 'Q4', 'HT', 'OT'].includes(g.status);
@@ -514,13 +598,10 @@ function screenPicks() {
           <span class="tiny muted">${statusLine}</span>
           ${result}
         </div>
-        <div class="row">
-          <button class="pick-btn ${awaySel ? 'selected' : ''}" ${locked ? 'disabled' : ''} onclick="makePick(${g.id}, '${g.away_team}')">
-            <span class="badge">${g.away_team_abbr || g.away_team.slice(0,3).toUpperCase()}</span>${g.away_team}
-          </button>
-          <button class="pick-btn ${homeSel ? 'selected' : ''}" ${locked ? 'disabled' : ''} onclick="makePick(${g.id}, '${g.home_team}')">
-            <span class="badge">${g.home_team_abbr || g.home_team.slice(0,3).toUpperCase()}</span>${g.home_team}
-          </button>
+        <div class="matchup">
+          ${teamButton(g, 'away', locked)}
+          <span class="vs muted" aria-hidden="true">@</span>
+          ${teamButton(g, 'home', locked)}
         </div>
       </div>
     `;
